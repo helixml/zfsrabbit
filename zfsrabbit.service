@@ -1,0 +1,33 @@
+[Unit]
+Description=ZFSRabbit - ZFS Replication and Monitoring Server
+After=network.target zfs.target
+Requires=zfs.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/bin/zfsrabbit -config /etc/zfsrabbit/config.yaml
+Restart=always
+RestartSec=10
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Environment
+Environment=ZFSRABBIT_ADMIN_PASSWORD=changeme
+
+# Security
+NoNewPrivileges=false
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log /var/lib/zfsrabbit /etc/zfsrabbit
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=zfsrabbit
+
+[Install]
+WantedBy=multi-user.target

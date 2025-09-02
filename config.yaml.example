@@ -1,0 +1,45 @@
+# ZFSRabbit Configuration Example
+# Copy to /etc/zfsrabbit/config.yaml and modify as needed
+
+server:
+  port: 8080
+  admin_pass_env: "ZFSRABBIT_ADMIN_PASSWORD"
+  log_level: "info"
+
+zfs:
+  dataset: "tank/data"           # Local ZFS dataset to replicate
+  compression: "lz4"             # Compression algorithm (lz4, gzip, etc.)
+  recursive: true                # Include child datasets
+
+ssh:
+  remote_host: "backup.example.com"      # Remote backup server
+  remote_user: "zfsbackup"               # SSH user on remote server
+  private_key: "/root/.ssh/id_rsa"       # SSH private key path
+  remote_dataset: "backup/tank-data"     # Remote dataset to receive snapshots
+  mbuffer_size: "1G"                     # mbuffer memory size
+
+email:
+  smtp_host: "smtp.gmail.com"
+  smtp_port: 587
+  smtp_user: "alerts@yourdomain.com"
+  smtp_password: "your-app-password"
+  from_email: "zfsrabbit@yourdomain.com"
+  to_emails:
+    - "admin@yourdomain.com"
+    - "sysadmin@yourdomain.com"
+  use_tls: true
+
+slack:
+  webhook_url: "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+  channel: "#zfsrabbit"
+  username: "ZFSRabbit"
+  icon_emoji: ":rabbit:"
+  enabled: true
+  alert_on_sync: true     # Send alerts for successful/failed sync operations
+  alert_on_errors: true   # Send alerts for system errors
+  slash_token: "your-slack-slash-command-token"
+
+schedule:
+  snapshot_cron: "0 2 * * *"      # Daily at 2 AM (cron format)
+  scrub_cron: "0 3 * * 0"         # Weekly on Sunday at 3 AM
+  monitor_interval: "5m"          # System monitoring interval
