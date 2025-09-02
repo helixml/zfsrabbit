@@ -3,7 +3,6 @@ package restore
 import (
 	"fmt"
 	"log"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -291,39 +290,22 @@ func (r *RestoreManager) checkForUncommittedData(dataset string) (bool, error) {
 		return true, nil
 	}
 	
-	// Method 2: Use ZFS diff to check for changes since last snapshot
+	// Use ZFS diff - the ONE reliable way to check for changes since snapshot
 	hasChanges, err := r.checkZFSDiffSinceSnapshot(dataset, latestSnapshot.Name)
 	if err != nil {
-		log.Printf("Warning: Could not check ZFS diff for %s: %v", dataset, err)
-		// Fall back to conservative approach - assume there might be changes
-		return true, nil
+		return false, fmt.Errorf("failed to check for uncommitted data using zfs diff: %w", err)
 	}
 	
-	if hasChanges {
-		return true, nil
-	}
-	
-	// Method 3: Check filesystem modification time vs snapshot time
-	hasRecentActivity, err := r.checkFilesystemActivity(dataset, latestSnapshot.Created)
-	if err != nil {
-		log.Printf("Warning: Could not check filesystem activity for %s: %v", dataset, err)
-		// Conservative approach - assume there might be changes
-		return true, nil
-	}
-	
-	return hasRecentActivity, nil
+	return hasChanges, nil
 }
 
 func (r *RestoreManager) checkZFSDiffSinceSnapshot(dataset, snapshotName string) (bool, error) {
-	// Method 1: Use ZFS diff to detect any changes since the snapshot
-	// This is the most reliable method as suggested by the user
+	// Use ZFS diff - the ONE way to detect changes since snapshot
 	cmd := exec.Command("zfs", "diff", fmt.Sprintf("%s@%s", dataset, snapshotName))
 	output, err := cmd.Output()
 	
 	if err != nil {
-		log.Printf("ZFS diff failed for %s@%s: %v", dataset, snapshotName, err)
-		// Fall back to Method 2: Check snapshot size vs current usage
-		return r.checkSnapshotSizeDifference(dataset, snapshotName)
+		return false, fmt.Errorf("zfs diff command failed for %s@%s: %w", dataset, snapshotName, err)
 	}
 	
 	// If output is empty, no changes since snapshot
@@ -336,54 +318,6 @@ func (r *RestoreManager) checkZFSDiffSinceSnapshot(dataset, snapshotName string)
 	return true, nil
 }
 
-func (r *RestoreManager) checkSnapshotSizeDifference(dataset, snapshotName string) (bool, error) {
-	// Check if the latest snapshot has non-zero 'used' space
-	// If used > 0, it means there have been writes since that snapshot
-	cmd := exec.Command("zfs", "get", "-H", "-o", "value", "used", fmt.Sprintf("%s@%s", dataset, snapshotName))
-	snapshotOutput, err := cmd.Output()
-	if err != nil {
-		log.Printf("Failed to get snapshot usage: %v", err)
-		return true, nil // Conservative: assume changes exist
-	}
-	
-	snapshotUsage := strings.TrimSpace(string(snapshotOutput))
-	
-	// If snapshot 'used' is non-zero, there have been writes since this snapshot
-	hasChanges := snapshotUsage != "0" && snapshotUsage != "0B"
-	
-	if hasChanges {
-		log.Printf("Snapshot %s@%s has used=%s (writes detected since snapshot)", dataset, snapshotName, snapshotUsage)
-	} else {
-		log.Printf("Snapshot %s@%s has used=0 (no writes since snapshot)", dataset, snapshotName)
-	}
-	
-	return hasChanges, nil
-}
-
-func (r *RestoreManager) checkFilesystemActivity(dataset string, lastSnapshotTime time.Time) (bool, error) {
-	// Get the mountpoint for the dataset
-	cmd := exec.Command("zfs", "get", "-H", "-o", "value", "mountpoint", dataset)
-	output, err := cmd.Output()
-	if err != nil {
-		return true, nil // Conservative: assume there's activity
-	}
-	
-	mountpoint := strings.TrimSpace(string(output))
-	if mountpoint == "-" || mountpoint == "none" {
-		// Dataset not mounted, no filesystem activity possible
-		return false, nil
-	}
-	
-	// Check if mountpoint exists and has been modified since last snapshot
-	fileInfo, err := os.Stat(mountpoint)
-	if err != nil {
-		// Can't stat mountpoint, assume no recent activity
-		return false, nil
-	}
-	
-	// If filesystem was modified after the last snapshot, there might be uncommitted data
-	return fileInfo.ModTime().After(lastSnapshotTime), nil
-}
 
 func (r *RestoreManager) verifyRestore(dataset, snapshotName string) error {
 	// Check if the restored dataset exists
