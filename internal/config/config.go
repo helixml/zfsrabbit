@@ -23,9 +23,9 @@ type ServerConfig struct {
 }
 
 type ZFSConfig struct {
-	Dataset     string `yaml:"dataset"`
-	Compression string `yaml:"compression"`
-	Recursive   bool   `yaml:"recursive"`
+	Dataset         string `yaml:"dataset"`
+	SendCompression string `yaml:"send_compression"`
+	Recursive       bool   `yaml:"recursive"`
 }
 
 type SSHConfig struct {
@@ -71,8 +71,8 @@ func Load(path string) (*Config, error) {
 			LogLevel:     "info",
 		},
 		ZFS: ZFSConfig{
-			Compression: "lz4",
-			Recursive:   true,
+			SendCompression: "lz4",
+			Recursive:       true,
 		},
 		SSH: SSHConfig{
 			MbufferSize: "1G",

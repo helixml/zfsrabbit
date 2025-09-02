@@ -79,7 +79,7 @@ server:
 ```yaml
 zfs:
   dataset: "tank/data"                 # Local dataset to replicate
-  compression: "lz4"                   # Compression for snapshots
+  send_compression: "lz4"              # ZFS send stream compression (saves bandwidth)
   recursive: true                      # Include child datasets
 ```
 
@@ -142,7 +142,9 @@ The web interface provides:
 - Snapshot management
 - Manual snapshot creation
 - Scrub operations
-- Restore functionality
+- **Multi-dataset browsing** - View all datasets on remote server
+- **Cross-dataset restore** - Restore from any remote dataset to local
+- Restore job tracking
 
 ### Slack Commands
 
@@ -157,6 +159,8 @@ Available commands:
 - `/zfsrabbit disks` - Show disk health
 - `/zfsrabbit restore <snapshot> <dataset>` - Restore a snapshot
 - `/zfsrabbit jobs` - Show active restore jobs
+- `/zfsrabbit remote` - List all remote datasets
+- `/zfsrabbit browse <dataset>` - Browse snapshots in a dataset
 - `/zfsrabbit help` - Show help message
 
 ### Manual Operations
@@ -211,8 +215,34 @@ Slack alerts include:
 1. **Snapshot Creation**: Creates timestamped snapshots of configured dataset
 2. **Remote Check**: Lists existing snapshots on remote server
 3. **Incremental Detection**: Finds last common snapshot for incremental transfer
-4. **Transfer**: Uses `zfs send | mbuffer | ssh | zfs receive` pipeline
+4. **Transfer**: Uses `zfs send -c | mbuffer | ssh | zfs receive` pipeline
 5. **Cleanup**: Removes old local snapshots (keeps last 30)
+
+## Multi-ZFSRabbit Setup
+
+When multiple ZFSRabbit instances send to the same remote server:
+
+### Remote Dataset Discovery
+- **Web Interface**: Shows all remote datasets and their snapshots
+- **Slack Commands**: `/zfsrabbit remote` lists all datasets, `/zfsrabbit browse <dataset>` shows details
+- **Cross-Restore**: Restore from any remote dataset to local system
+
+### Example Setup
+```yaml
+# Instance 1 (server-1)
+zfs:
+  dataset: "tank/web"
+ssh:
+  remote_dataset: "backup/server-1-web"
+
+# Instance 2 (server-2)  
+zfs:
+  dataset: "tank/database"
+ssh:
+  remote_dataset: "backup/server-2-db"
+```
+
+Both instances can see and restore from each other's remote datasets.
 
 ## Troubleshooting
 

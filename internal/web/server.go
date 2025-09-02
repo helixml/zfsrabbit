@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
 	"zfsrabbit/internal/config"
 	"zfsrabbit/internal/scheduler"
@@ -12,6 +13,7 @@ import (
 	"zfsrabbit/internal/zfs"
 	"zfsrabbit/internal/restore"
 	"zfsrabbit/internal/slack"
+	"zfsrabbit/internal/transport"
 )
 
 type Server struct {
@@ -21,10 +23,11 @@ type Server struct {
 	zfsManager *zfs.Manager
 	restoreManager *restore.RestoreManager
 	slackHandler *slack.CommandHandler
+	transport *transport.SSHTransport
 }
 
-func NewServer(cfg *config.Config, sched *scheduler.Scheduler, mon *monitor.Monitor, zfsMgr *zfs.Manager, restoreMgr *restore.RestoreManager) *Server {
-	slackHandler := slack.NewCommandHandler(&cfg.Slack, sched, mon, zfsMgr, restoreMgr)
+func NewServer(cfg *config.Config, sched *scheduler.Scheduler, mon *monitor.Monitor, zfsMgr *zfs.Manager, restoreMgr *restore.RestoreManager, transport *transport.SSHTransport) *Server {
+	slackHandler := slack.NewCommandHandler(&cfg.Slack, sched, mon, zfsMgr, restoreMgr, transport)
 	
 	return &Server{
 		config:    cfg,
@@ -33,6 +36,7 @@ func NewServer(cfg *config.Config, sched *scheduler.Scheduler, mon *monitor.Moni
 		zfsManager: zfsMgr,
 		restoreManager: restoreMgr,
 		slackHandler: slackHandler,
+		transport: transport,
 	}
 }
 
@@ -44,6 +48,8 @@ func (s *Server) Start() error {
 	http.HandleFunc("/api/trigger/scrub", s.basicAuth(s.handleTriggerScrub))
 	http.HandleFunc("/api/restore", s.basicAuth(s.handleRestore))
 	http.HandleFunc("/api/restore/jobs", s.basicAuth(s.handleRestoreJobs))
+	http.HandleFunc("/api/remote/datasets", s.basicAuth(s.handleRemoteDatasets))
+	http.HandleFunc("/api/remote/dataset/", s.basicAuth(s.handleRemoteDatasetInfo))
 	http.HandleFunc("/slack/command", s.slackHandler.HandleSlashCommand)
 	http.HandleFunc("/static/", s.handleStatic)
 
@@ -90,6 +96,11 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
         .snapshots { max-height: 300px; overflow-y: auto; }
         .snapshot { display: flex; justify-content: space-between; align-items: center; padding: 8px; border-bottom: 1px solid #eee; }
         .logs { max-height: 200px; overflow-y: auto; background: #f8f9fa; padding: 10px; font-family: monospace; font-size: 12px; }
+        .dataset { background: #f8f9fa; padding: 10px; margin: 5px 0; border-radius: 4px; border-left: 4px solid #007cba; }
+        .dataset.local { border-left-color: #28a745; }
+        .dataset.remote { border-left-color: #ffc107; }
+        .snapshots-list { max-height: 100px; overflow-y: auto; font-size: 12px; margin-top: 5px; }
+        select, input[type="text"] { padding: 8px; margin: 5px; border: 1px solid #ddd; border-radius: 4px; }
         #refreshBtn { position: fixed; top: 20px; right: 20px; }
     </style>
 </head>
@@ -119,9 +130,19 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
         </div>
 
         <div class="section">
+            <h2>Remote Datasets</h2>
+            <div id="remoteDatasets">Loading remote datasets...</div>
+        </div>
+
+        <div class="section">
             <h2>Restore</h2>
-            <input type="text" id="restoreSnapshot" placeholder="Snapshot name">
-            <input type="text" id="restoreDataset" placeholder="Target dataset">
+            <select id="restoreSourceDataset">
+                <option value="">Select source dataset...</option>
+            </select>
+            <select id="restoreSnapshot">
+                <option value="">Select snapshot...</option>
+            </select>
+            <input type="text" id="restoreTargetDataset" placeholder="Target dataset">
             <button class="button danger" onclick="restore()">Restore</button>
         </div>
     </div>
@@ -213,15 +234,129 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
             }
         }
 
+        async function loadRemoteDatasets() {
+            try {
+                const response = await fetch('/api/remote/datasets');
+                const data = await response.json();
+                
+                let html = '';
+                
+                // Show local dataset
+                html += '<div class="dataset local">' +
+                       '<strong>📂 Local Dataset (This Instance):</strong> ' + data.local_dataset +
+                       '<div class="snapshots-list">';
+                
+                if (data.managed_by_this_instance.snapshots) {
+                    data.managed_by_this_instance.snapshots.forEach(snap => {
+                        html += '<div>• ' + snap + '</div>';
+                    });
+                }
+                html += '</div></div>';
+                
+                // Show available datasets for restore
+                if (data.available_for_restore.length > 0) {
+                    html += '<div class="dataset remote">' +
+                           '<strong>📥 Available for Restore:</strong><br>';
+                    
+                    data.available_for_restore.forEach(item => {
+                        html += '<div style="margin: 10px 0;"><strong>' + item.dataset + '</strong> (' + 
+                               item.snapshots.length + ' snapshots, latest: ' + item.latest_snapshot + ')' +
+                               '<div class="snapshots-list">';
+                        
+                        item.snapshots.forEach(snap => {
+                            html += '<div>• ' + snap + '</div>';
+                        });
+                        html += '</div></div>';
+                    });
+                    html += '</div>';
+                }
+                
+                document.getElementById('remoteDatasets').innerHTML = html;
+                
+                // Populate restore dropdown
+                const sourceSelect = document.getElementById('restoreSourceDataset');
+                sourceSelect.innerHTML = '<option value="">Select source dataset...</option>';
+                
+                data.available_for_restore.forEach(item => {
+                    const option = document.createElement('option');
+                    option.value = item.dataset;
+                    option.textContent = item.dataset + ' (' + item.snapshots.length + ' snapshots)';
+                    sourceSelect.appendChild(option);
+                });
+                
+            } catch (error) {
+                document.getElementById('remoteDatasets').innerHTML = 'Failed to load remote datasets: ' + error.message;
+            }
+        }
+
+        async function updateSnapshotList() {
+            const sourceDataset = document.getElementById('restoreSourceDataset').value;
+            const snapshotSelect = document.getElementById('restoreSnapshot');
+            
+            snapshotSelect.innerHTML = '<option value="">Select snapshot...</option>';
+            
+            if (!sourceDataset) return;
+            
+            try {
+                const response = await fetch('/api/remote/dataset/' + encodeURIComponent(sourceDataset));
+                const data = await response.json();
+                
+                data.snapshots.forEach(snapshot => {
+                    const option = document.createElement('option');
+                    option.value = snapshot;
+                    option.textContent = snapshot;
+                    snapshotSelect.appendChild(option);
+                });
+                
+            } catch (error) {
+                console.error('Failed to load snapshots:', error);
+            }
+        }
+
+        async function restore() {
+            const sourceDataset = document.getElementById('restoreSourceDataset').value;
+            const snapshot = document.getElementById('restoreSnapshot').value;
+            const targetDataset = document.getElementById('restoreTargetDataset').value;
+            
+            if (!sourceDataset || !snapshot || !targetDataset) {
+                alert('Please select source dataset, snapshot, and enter target dataset');
+                return;
+            }
+            
+            if (!confirm('This will overwrite the target dataset. Are you sure?')) {
+                return;
+            }
+            
+            try {
+                await fetch('/api/restore', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        snapshot: snapshot, 
+                        dataset: targetDataset,
+                        source_dataset: sourceDataset
+                    })
+                });
+                alert('Restore started');
+            } catch (error) {
+                alert('Failed to start restore: ' + error.message);
+            }
+        }
+
+        // Event listeners
+        document.getElementById('restoreSourceDataset').addEventListener('change', updateSnapshotList);
+
         // Load initial data
         loadStatus();
         loadSnapshots();
+        loadRemoteDatasets();
         
         // Refresh every 30 seconds
         setInterval(() => {
             loadStatus();
             loadSnapshots();
-        }, 30000);
+            loadRemoteDatasets();
+        }, 60000); // Refresh remote datasets less frequently
     </script>
 </body>
 </html>`
@@ -313,8 +448,9 @@ func (s *Server) handleRestore(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	var req struct {
-		Snapshot string `json:"snapshot"`
-		Dataset  string `json:"dataset"`
+		Snapshot      string `json:"snapshot"`
+		Dataset       string `json:"dataset"`
+		SourceDataset string `json:"source_dataset,omitempty"`
 	}
 	
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -327,7 +463,15 @@ func (s *Server) handleRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	job, err := s.restoreManager.StartRestoreWithTracking(req.Snapshot, req.Dataset)
+	var job *restore.RestoreJob
+	var err error
+	
+	if req.SourceDataset != "" {
+		job, err = s.restoreManager.StartRestoreFromDatasetWithTracking(req.SourceDataset, req.Snapshot, req.Dataset)
+	} else {
+		job, err = s.restoreManager.StartRestoreWithTracking(req.Snapshot, req.Dataset)
+	}
+	
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -364,6 +508,62 @@ func (s *Server) handleRestoreJobs(w http.ResponseWriter, r *http.Request) {
 	
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) handleRemoteDatasets(w http.ResponseWriter, r *http.Request) {
+	datasets, err := s.transport.ListAllRemoteDatasets()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to list remote datasets: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Categorize datasets
+	response := map[string]interface{}{
+		"local_dataset": s.config.ZFS.Dataset,
+		"remote_datasets": datasets,
+		"available_for_restore": []map[string]interface{}{},
+		"managed_by_this_instance": map[string]interface{}{
+			"dataset": s.config.SSH.RemoteDataset,
+			"snapshots": datasets[s.config.SSH.RemoteDataset],
+		},
+	}
+
+	// Find datasets that exist remotely but not locally managed
+	for dataset, snapshots := range datasets {
+		if dataset != s.config.SSH.RemoteDataset && len(snapshots) > 0 {
+			response["available_for_restore"] = append(
+				response["available_for_restore"].([]map[string]interface{}), 
+				map[string]interface{}{
+					"dataset": dataset,
+					"snapshots": snapshots,
+					"latest_snapshot": snapshots[len(snapshots)-1], // Last snapshot
+				})
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) handleRemoteDatasetInfo(w http.ResponseWriter, r *http.Request) {
+	// Extract dataset name from URL path
+	path := strings.TrimPrefix(r.URL.Path, "/api/remote/dataset/")
+	if path == "" {
+		http.Error(w, "Dataset name required", http.StatusBadRequest)
+		return
+	}
+
+	// URL decode the dataset name (in case it contains special characters)
+	dataset := strings.ReplaceAll(path, "%2F", "/")
+
+	info, err := s.transport.GetRemoteDatasetInfo(dataset)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get dataset info: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(info)
 }
 
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {

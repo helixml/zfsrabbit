@@ -160,16 +160,15 @@ func (m *Monitor) parseScrubStatus(scanLine string) ScrubStatus {
 		scrub.InProgress = true
 	}
 	
-	if strings.Contains(scanLine, "completed") {
-		re := regexp.MustCompile(`completed on (.+?) with (\d+) errors`)
-		matches := re.FindStringSubmatch(scanLine)
-		if len(matches) == 3 {
-			if t, err := time.Parse("Mon Jan 2 15:04:05 2006", matches[1]); err == nil {
-				scrub.LastRun = t
-			}
-			if errors, err := strconv.Atoi(matches[2]); err == nil {
-				scrub.Errors = errors
-			}
+	// Handle completed scrub with error count
+	re := regexp.MustCompile(`with (\d+) errors on (.+?)$`)
+	matches := re.FindStringSubmatch(scanLine)
+	if len(matches) >= 3 {
+		if errors, err := strconv.Atoi(matches[1]); err == nil {
+			scrub.Errors = errors
+		}
+		if t, err := time.Parse("Mon Jan 2 15:04:05 2006", matches[2]); err == nil {
+			scrub.LastRun = t
 		}
 	}
 	

@@ -1,0 +1,41 @@
+# Test configuration for ZFSRabbit
+server:
+  port: 8080
+  admin_pass_env: "ZFSRABBIT_ADMIN_PASSWORD"
+  log_level: "debug"
+
+zfs:
+  dataset: "tank/test"
+  send_compression: "lz4"
+  recursive: false
+
+ssh:
+  remote_host: "test.example.com"
+  remote_user: "testuser"
+  private_key: "/tmp/test_key"
+  remote_dataset: "backup/test"
+  mbuffer_size: "1G"
+
+email:
+  smtp_host: ""
+  smtp_port: 587
+  smtp_user: ""
+  smtp_password: ""
+  from_email: "test@example.com"
+  to_emails:
+    - "admin@example.com"
+  use_tls: true
+
+slack:
+  webhook_url: ""
+  channel: "#test"
+  username: "ZFSRabbit-Test"
+  icon_emoji: ":floppy_disk:"
+  enabled: false
+  alert_on_sync: false
+  alert_on_errors: false
+  slash_token: ""
+
+schedule:
+  snapshot_cron: "0 2 * * *"  # Daily at 2 AM
+  scrub_cron: "0 3 * * 0"     # Weekly on Sunday at 3 AM

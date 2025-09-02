@@ -8,7 +8,7 @@ server:
 
 zfs:
   dataset: "tank/data"           # Local ZFS dataset to replicate
-  compression: "lz4"             # Compression algorithm (lz4, gzip, etc.)
+  send_compression: "lz4"        # ZFS send stream compression (reduces bandwidth)
   recursive: true                # Include child datasets
 
 ssh:

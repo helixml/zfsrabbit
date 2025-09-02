@@ -17,6 +17,7 @@ type RestoreManager struct {
 type RestoreJob struct {
 	ID            string
 	SnapshotName  string
+	SourceDataset string
 	TargetDataset string
 	Status        string
 	Progress      int
@@ -33,9 +34,14 @@ func New(transport *transport.SSHTransport, zfsManager *zfs.Manager) *RestoreMan
 }
 
 func (r *RestoreManager) RestoreSnapshot(snapshotName, targetDataset string) (*RestoreJob, error) {
+	return r.RestoreSnapshotFromDataset("", snapshotName, targetDataset)
+}
+
+func (r *RestoreManager) RestoreSnapshotFromDataset(sourceDataset, snapshotName, targetDataset string) (*RestoreJob, error) {
 	job := &RestoreJob{
 		ID:            generateJobID(),
 		SnapshotName:  snapshotName,
+		SourceDataset: sourceDataset,
 		TargetDataset: targetDataset,
 		Status:        "starting",
 		Progress:      0,
@@ -48,7 +54,11 @@ func (r *RestoreManager) RestoreSnapshot(snapshotName, targetDataset string) (*R
 }
 
 func (r *RestoreManager) performRestore(job *RestoreJob) {
-	log.Printf("Starting restore job %s: %s -> %s", job.ID, job.SnapshotName, job.TargetDataset)
+	sourceInfo := "default remote dataset"
+	if job.SourceDataset != "" {
+		sourceInfo = job.SourceDataset
+	}
+	log.Printf("Starting restore job %s: %s@%s -> %s", job.ID, sourceInfo, job.SnapshotName, job.TargetDataset)
 	
 	defer func() {
 		if r := recover(); r != nil {
@@ -64,10 +74,23 @@ func (r *RestoreManager) performRestore(job *RestoreJob) {
 	job.Status = "verifying"
 	job.Progress = 10
 	
-	remoteSnapshots, err := r.transport.ListRemoteSnapshots()
-	if err != nil {
-		r.failJob(job, fmt.Errorf("failed to list remote snapshots: %w", err))
-		return
+	var remoteSnapshots []string
+	var err error
+	
+	if job.SourceDataset != "" {
+		// Get snapshots from specific dataset
+		remoteSnapshots, err = r.transport.GetSnapshotsForDataset(job.SourceDataset)
+		if err != nil {
+			r.failJob(job, fmt.Errorf("failed to list snapshots for dataset %s: %w", job.SourceDataset, err))
+			return
+		}
+	} else {
+		// Use default remote dataset
+		remoteSnapshots, err = r.transport.ListRemoteSnapshots()
+		if err != nil {
+			r.failJob(job, fmt.Errorf("failed to list remote snapshots: %w", err))
+			return
+		}
 	}
 	
 	found := false
@@ -103,8 +126,15 @@ func (r *RestoreManager) performRestore(job *RestoreJob) {
 	job.Status = "restoring"
 	job.Progress = 30
 	
-	if err := r.transport.RestoreSnapshot(job.SnapshotName, job.TargetDataset); err != nil {
-		r.failJob(job, fmt.Errorf("restore failed: %w", err))
+	var restoreErr error
+	if job.SourceDataset != "" {
+		restoreErr = r.transport.RestoreSnapshotFromDataset(job.SourceDataset, job.SnapshotName, job.TargetDataset)
+	} else {
+		restoreErr = r.transport.RestoreSnapshot(job.SnapshotName, job.TargetDataset)
+	}
+	
+	if restoreErr != nil {
+		r.failJob(job, fmt.Errorf("restore failed: %w", restoreErr))
 		return
 	}
 	
@@ -161,7 +191,7 @@ func (r *RestoreManager) verifyRestore(dataset, snapshotName string) error {
 }
 
 func generateJobID() string {
-	return fmt.Sprintf("restore_%d", time.Now().Unix())
+	return fmt.Sprintf("restore_%d", time.Now().UnixNano())
 }
 
 // Job tracking for web interface
@@ -181,7 +211,19 @@ func (r *RestoreManager) ListJobs() []*RestoreJob {
 }
 
 func (r *RestoreManager) StartRestoreWithTracking(snapshotName, targetDataset string) (*RestoreJob, error) {
-	job, err := r.RestoreSnapshot(snapshotName, targetDataset)
+	return r.StartRestoreFromDatasetWithTracking("", snapshotName, targetDataset)
+}
+
+func (r *RestoreManager) StartRestoreFromDatasetWithTracking(sourceDataset, snapshotName, targetDataset string) (*RestoreJob, error) {
+	var job *RestoreJob
+	var err error
+	
+	if sourceDataset != "" {
+		job, err = r.RestoreSnapshotFromDataset(sourceDataset, snapshotName, targetDataset)
+	} else {
+		job, err = r.RestoreSnapshot(snapshotName, targetDataset)
+	}
+	
 	if err != nil {
 		return nil, err
 	}

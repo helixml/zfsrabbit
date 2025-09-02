@@ -118,7 +118,99 @@ func (t *SSHTransport) ListRemoteSnapshots() ([]string, error) {
 	return snapshots, nil
 }
 
+func (t *SSHTransport) ListAllRemoteDatasets() (map[string][]string, error) {
+	// Get all datasets on remote server
+	output, err := t.ExecuteCommand("zfs list -H -o name -t filesystem,volume")
+	if err != nil {
+		return nil, err
+	}
+
+	datasets := make(map[string][]string)
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	
+	for _, dataset := range lines {
+		dataset = strings.TrimSpace(dataset)
+		if dataset == "" {
+			continue
+		}
+		
+		// Get snapshots for this dataset
+		snapshots, err := t.GetSnapshotsForDataset(dataset)
+		if err != nil {
+			// Continue if we can't get snapshots for this dataset
+			continue
+		}
+		
+		if len(snapshots) > 0 {
+			datasets[dataset] = snapshots
+		}
+	}
+
+	return datasets, nil
+}
+
+func (t *SSHTransport) GetSnapshotsForDataset(dataset string) ([]string, error) {
+	output, err := t.ExecuteCommand(fmt.Sprintf("zfs list -t snapshot -H -o name %s 2>/dev/null", dataset))
+	if err != nil {
+		return nil, err
+	}
+
+	var snapshots []string
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	for _, line := range lines {
+		if line != "" && strings.Contains(line, "@") {
+			parts := strings.Split(line, "@")
+			if len(parts) == 2 {
+				snapshots = append(snapshots, parts[1])
+			}
+		}
+	}
+
+	return snapshots, nil
+}
+
+func (t *SSHTransport) GetRemoteDatasetInfo(dataset string) (*RemoteDatasetInfo, error) {
+	output, err := t.ExecuteCommand(fmt.Sprintf("zfs list -H -o name,used,avail,refer,mountpoint %s", dataset))
+	if err != nil {
+		return nil, err
+	}
+
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) == 0 || lines[0] == "" {
+		return nil, fmt.Errorf("dataset %s not found", dataset)
+	}
+
+	fields := strings.Fields(lines[0])
+	if len(fields) < 5 {
+		return nil, fmt.Errorf("invalid dataset info format")
+	}
+
+	snapshots, _ := t.GetSnapshotsForDataset(dataset)
+
+	return &RemoteDatasetInfo{
+		Name:       fields[0],
+		Used:       fields[1],
+		Available:  fields[2],
+		Referenced: fields[3],
+		Mountpoint: fields[4],
+		Snapshots:  snapshots,
+	}, nil
+}
+
+type RemoteDatasetInfo struct {
+	Name       string   `json:"name"`
+	Used       string   `json:"used"`
+	Available  string   `json:"available"`
+	Referenced string   `json:"referenced"`
+	Mountpoint string   `json:"mountpoint"`
+	Snapshots  []string `json:"snapshots"`
+}
+
 func (t *SSHTransport) RestoreSnapshot(snapshotName, localDataset string) error {
+	return t.RestoreSnapshotFromDataset(t.config.RemoteDataset, snapshotName, localDataset)
+}
+
+func (t *SSHTransport) RestoreSnapshotFromDataset(remoteDataset, snapshotName, localDataset string) error {
 	if t.client == nil {
 		if err := t.Connect(); err != nil {
 			return err
@@ -131,7 +223,7 @@ func (t *SSHTransport) RestoreSnapshot(snapshotName, localDataset string) error 
 	}
 	defer session.Close()
 
-	sendCmd := fmt.Sprintf("zfs send %s@%s", t.config.RemoteDataset, snapshotName)
+	sendCmd := fmt.Sprintf("zfs send %s@%s", remoteDataset, snapshotName)
 	
 	session.Stdout = &mbufferReceiver{
 		dataset: localDataset,

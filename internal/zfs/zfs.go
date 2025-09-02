@@ -10,9 +10,30 @@ import (
 )
 
 type Manager struct {
-	dataset     string
-	compression string
-	recursive   bool
+	dataset         string
+	sendCompression string
+	recursive       bool
+	executor        CommandExecutor
+}
+
+type CommandExecutor interface {
+	Command(name string, args ...string) *exec.Cmd
+	Output(cmd *exec.Cmd) ([]byte, error)
+	Run(cmd *exec.Cmd) error
+}
+
+type DefaultCommandExecutor struct{}
+
+func (d *DefaultCommandExecutor) Command(name string, args ...string) *exec.Cmd {
+	return exec.Command(name, args...)
+}
+
+func (d *DefaultCommandExecutor) Output(cmd *exec.Cmd) ([]byte, error) {
+	return cmd.Output()
+}
+
+func (d *DefaultCommandExecutor) Run(cmd *exec.Cmd) error {
+	return cmd.Run()
 }
 
 type Snapshot struct {
@@ -39,11 +60,21 @@ type DeviceStatus struct {
 	Cksum  int
 }
 
-func New(dataset, compression string, recursive bool) *Manager {
+func New(dataset, sendCompression string, recursive bool) *Manager {
 	return &Manager{
-		dataset:     dataset,
-		compression: compression,
-		recursive:   recursive,
+		dataset:         dataset,
+		sendCompression: sendCompression,
+		recursive:       recursive,
+		executor:        &DefaultCommandExecutor{},
+	}
+}
+
+func NewWithExecutor(dataset, sendCompression string, recursive bool, executor CommandExecutor) *Manager {
+	return &Manager{
+		dataset:         dataset,
+		sendCompression: sendCompression,
+		recursive:       recursive,
+		executor:        executor,
 	}
 }
 
@@ -56,13 +87,13 @@ func (m *Manager) CreateSnapshot(name string) error {
 	}
 	args = append(args, snapshotName)
 	
-	cmd := exec.Command("zfs", args...)
-	return cmd.Run()
+	cmd := m.executor.Command("zfs", args...)
+	return m.executor.Run(cmd)
 }
 
 func (m *Manager) ListSnapshots() ([]Snapshot, error) {
-	cmd := exec.Command("zfs", "list", "-t", "snapshot", "-H", "-o", "name,creation,used,refer", "-s", "creation", m.dataset)
-	output, err := cmd.Output()
+	cmd := m.executor.Command("zfs", "list", "-t", "snapshot", "-H", "-o", "name,creation,used,refer", "-s", "creation", m.dataset)
+	output, err := m.executor.Output(cmd)
 	if err != nil {
 		return nil, err
 	}
@@ -92,15 +123,15 @@ func (m *Manager) ListSnapshots() ([]Snapshot, error) {
 
 func (m *Manager) DestroySnapshot(name string) error {
 	snapshotName := fmt.Sprintf("%s@%s", m.dataset, name)
-	cmd := exec.Command("zfs", "destroy", snapshotName)
-	return cmd.Run()
+	cmd := m.executor.Command("zfs", "destroy", snapshotName)
+	return m.executor.Run(cmd)
 }
 
 func (m *Manager) SendSnapshot(snapshot string) (*exec.Cmd, error) {
 	snapshotName := fmt.Sprintf("%s@%s", m.dataset, snapshot)
 	
 	args := []string{"send"}
-	if m.compression != "" {
+	if m.sendCompression != "" {
 		args = append(args, "-c")
 	}
 	if m.recursive {
@@ -108,7 +139,7 @@ func (m *Manager) SendSnapshot(snapshot string) (*exec.Cmd, error) {
 	}
 	args = append(args, snapshotName)
 	
-	cmd := exec.Command("zfs", args...)
+	cmd := m.executor.Command("zfs", args...)
 	return cmd, nil
 }
 
@@ -117,7 +148,7 @@ func (m *Manager) SendIncremental(fromSnapshot, toSnapshot string) (*exec.Cmd, e
 	toName := fmt.Sprintf("%s@%s", m.dataset, toSnapshot)
 	
 	args := []string{"send"}
-	if m.compression != "" {
+	if m.sendCompression != "" {
 		args = append(args, "-c")
 	}
 	if m.recursive {
@@ -125,12 +156,12 @@ func (m *Manager) SendIncremental(fromSnapshot, toSnapshot string) (*exec.Cmd, e
 	}
 	args = append(args, "-i", fromName, toName)
 	
-	cmd := exec.Command("zfs", args...)
+	cmd := m.executor.Command("zfs", args...)
 	return cmd, nil
 }
 
 func (m *Manager) ReceiveSnapshot(dataset string) (*exec.Cmd, error) {
-	cmd := exec.Command("zfs", "receive", "-F", dataset)
+	cmd := m.executor.Command("zfs", "receive", "-F", dataset)
 	return cmd, nil
 }
 

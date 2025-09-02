@@ -11,6 +11,7 @@ import (
 	"zfsrabbit/internal/monitor"
 	"zfsrabbit/internal/zfs"
 	"zfsrabbit/internal/restore"
+	"zfsrabbit/internal/transport"
 )
 
 type CommandHandler struct {
@@ -19,6 +20,7 @@ type CommandHandler struct {
 	monitor        *monitor.Monitor
 	zfsManager     *zfs.Manager
 	restoreManager *restore.RestoreManager
+	transport      *transport.SSHTransport
 }
 
 type SlashCommandRequest struct {
@@ -63,13 +65,14 @@ type SlackField struct {
 	Short bool   `json:"short,omitempty"`
 }
 
-func NewCommandHandler(cfg *config.SlackConfig, sched *scheduler.Scheduler, mon *monitor.Monitor, zfsMgr *zfs.Manager, restoreMgr *restore.RestoreManager) *CommandHandler {
+func NewCommandHandler(cfg *config.SlackConfig, sched *scheduler.Scheduler, mon *monitor.Monitor, zfsMgr *zfs.Manager, restoreMgr *restore.RestoreManager, transport *transport.SSHTransport) *CommandHandler {
 	return &CommandHandler{
 		config:         cfg,
 		scheduler:      sched,
 		monitor:        mon,
 		zfsManager:     zfsMgr,
 		restoreManager: restoreMgr,
+		transport:      transport,
 	}
 }
 
@@ -140,6 +143,16 @@ func (h *CommandHandler) processCommand(req SlashCommandRequest) SlashCommandRes
 		return h.triggerRestore(args[1], args[2])
 	case "jobs":
 		return h.getRestoreJobs()
+	case "remote":
+		return h.getRemoteDatasets()
+	case "browse":
+		if len(args) < 2 {
+			return SlashCommandResponse{
+				ResponseType: "ephemeral",
+				Text:         "Usage: browse <dataset_name>",
+			}
+		}
+		return h.browseRemoteDataset(args[1])
 	case "help":
 		return h.showHelp()
 	default:
@@ -161,6 +174,8 @@ func (h *CommandHandler) showHelp() SlashCommandResponse {
 • *disks* - Show disk health status
 • *restore <snapshot> <dataset>* - Restore a snapshot
 • *jobs* - Show active restore jobs
+• *remote* - Show all remote datasets
+• *browse <dataset>* - Browse snapshots in a remote dataset
 • *help* - Show this help message
 
 Example: ` + "`/zfsrabbit status`"
@@ -411,6 +426,76 @@ func (h *CommandHandler) getRestoreJobs() SlashCommandResponse {
 		text += fmt.Sprintf("• %s `%s` - %s (%d%%)\n", emoji, job.ID, job.Status, job.Progress)
 		if job.Error != nil {
 			text += fmt.Sprintf("  Error: %s\n", job.Error.Error())
+		}
+	}
+
+	return SlashCommandResponse{
+		ResponseType: "ephemeral",
+		Text:         text,
+	}
+}
+
+func (h *CommandHandler) getRemoteDatasets() SlashCommandResponse {
+	datasets, err := h.transport.ListAllRemoteDatasets()
+	if err != nil {
+		return SlashCommandResponse{
+			ResponseType: "ephemeral",
+			Text:         fmt.Sprintf("❌ Failed to list remote datasets: %s", err.Error()),
+		}
+	}
+
+	if len(datasets) == 0 {
+		return SlashCommandResponse{
+			ResponseType: "ephemeral",
+			Text:         "No remote datasets found.",
+		}
+	}
+
+	text := "*Remote Datasets Available:*\n"
+	for dataset, snapshots := range datasets {
+		snapshotCount := len(snapshots)
+		latestSnapshot := "none"
+		if snapshotCount > 0 {
+			latestSnapshot = snapshots[snapshotCount-1]
+		}
+		text += fmt.Sprintf("• `%s` - %d snapshots (latest: %s)\n", dataset, snapshotCount, latestSnapshot)
+	}
+
+	text += "\nUse `browse <dataset>` to see all snapshots in a specific dataset."
+
+	return SlashCommandResponse{
+		ResponseType: "ephemeral",
+		Text:         text,
+	}
+}
+
+func (h *CommandHandler) browseRemoteDataset(dataset string) SlashCommandResponse {
+	info, err := h.transport.GetRemoteDatasetInfo(dataset)
+	if err != nil {
+		return SlashCommandResponse{
+			ResponseType: "ephemeral",
+			Text:         fmt.Sprintf("❌ Failed to get dataset info: %s", err.Error()),
+		}
+	}
+
+	text := fmt.Sprintf("*Dataset: %s*\n", info.Name)
+	text += fmt.Sprintf("Used: %s | Available: %s | Referenced: %s\n", info.Used, info.Available, info.Referenced)
+	text += fmt.Sprintf("Mountpoint: %s\n\n", info.Mountpoint)
+
+	if len(info.Snapshots) == 0 {
+		text += "No snapshots found in this dataset."
+	} else {
+		text += fmt.Sprintf("*Snapshots (%d):*\n", len(info.Snapshots))
+		
+		// Show last 10 snapshots
+		start := 0
+		if len(info.Snapshots) > 10 {
+			start = len(info.Snapshots) - 10
+			text += fmt.Sprintf("(Showing latest 10 of %d snapshots)\n", len(info.Snapshots))
+		}
+		
+		for i := start; i < len(info.Snapshots); i++ {
+			text += fmt.Sprintf("• `%s`\n", info.Snapshots[i])
 		}
 	}
 

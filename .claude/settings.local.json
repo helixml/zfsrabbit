@@ -3,7 +3,10 @@
     "allow": [
       "Bash(go mod init:*)",
       "Bash(go mod:*)",
-      "Bash(go build:*)"
+      "Bash(go build:*)",
+      "Bash(go test:*)",
+      "Bash(chmod:*)",
+      "Bash(make test-unit:*)"
     ],
     "deny": [],
     "ask": []

@@ -30,7 +30,7 @@ type Server struct {
 func New(cfg *config.Config) (*Server, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	
-	zfsManager := zfs.New(cfg.ZFS.Dataset, cfg.ZFS.Compression, cfg.ZFS.Recursive)
+	zfsManager := zfs.New(cfg.ZFS.Dataset, cfg.ZFS.SendCompression, cfg.ZFS.Recursive)
 	
 	transport := transport.NewSSHTransport(&cfg.SSH)
 	
@@ -42,7 +42,7 @@ func New(cfg *config.Config) (*Server, error) {
 	
 	restoreManager := restore.New(transport, zfsManager)
 	
-	webServer := web.NewServer(cfg, scheduler, monitor, zfsManager, restoreManager)
+	webServer := web.NewServer(cfg, scheduler, monitor, zfsManager, restoreManager, transport)
 	
 	return &Server{
 		config:     cfg,
