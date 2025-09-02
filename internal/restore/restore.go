@@ -5,6 +5,7 @@ import (
 	"log"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"zfsrabbit/internal/transport"
@@ -12,8 +13,9 @@ import (
 )
 
 type RestoreManager struct {
-	transport  *transport.SSHTransport
-	zfsManager *zfs.Manager
+	transport    *transport.SSHTransport
+	zfsManager   *zfs.Manager
+	restoreMutex sync.Mutex // Prevents concurrent restore operations
 }
 
 type RestoreJob struct {
@@ -44,6 +46,8 @@ func New(transport *transport.SSHTransport, zfsManager *zfs.Manager) *RestoreMan
 
 // ConfirmDestructiveRestore allows user to confirm and proceed with a destructive restore
 func (r *RestoreManager) ConfirmDestructiveRestore(jobID string) error {
+	activeJobsMutex.Lock()
+	defer activeJobsMutex.Unlock()
 	job, exists := activeJobs[jobID]
 	if !exists {
 		return fmt.Errorf("restore job %s not found", jobID)
@@ -345,13 +349,18 @@ func generateJobID() string {
 
 // Job tracking for web interface
 var activeJobs = make(map[string]*RestoreJob)
+var activeJobsMutex sync.RWMutex // Protects activeJobs map
 
 func (r *RestoreManager) GetJob(id string) (*RestoreJob, bool) {
+	activeJobsMutex.RLock()
+	defer activeJobsMutex.RUnlock()
 	job, exists := activeJobs[id]
 	return job, exists
 }
 
 func (r *RestoreManager) ListJobs() []*RestoreJob {
+	activeJobsMutex.RLock()
+	defer activeJobsMutex.RUnlock()
 	jobs := make([]*RestoreJob, 0, len(activeJobs))
 	for _, job := range activeJobs {
 		jobs = append(jobs, job)
@@ -364,6 +373,12 @@ func (r *RestoreManager) StartRestoreWithTracking(snapshotName, targetDataset st
 }
 
 func (r *RestoreManager) StartRestoreFromDatasetWithTracking(sourceDataset, snapshotName, targetDataset string) (*RestoreJob, error) {
+	// Check if a restore is already in progress
+	if !r.restoreMutex.TryLock() {
+		return nil, fmt.Errorf("restore operation already in progress")
+	}
+	defer r.restoreMutex.Unlock()
+
 	var job *RestoreJob
 	var err error
 
@@ -377,13 +392,17 @@ func (r *RestoreManager) StartRestoreFromDatasetWithTracking(sourceDataset, snap
 		return nil, err
 	}
 
+	activeJobsMutex.Lock()
 	activeJobs[job.ID] = job
+	activeJobsMutex.Unlock()
 
 	// Clean up completed jobs after 1 hour
 	go func() {
 		time.Sleep(1 * time.Hour)
 		if job.Status == "completed" || job.Status == "failed" {
+			activeJobsMutex.Lock()
 			delete(activeJobs, job.ID)
+			activeJobsMutex.Unlock()
 		}
 	}()
 

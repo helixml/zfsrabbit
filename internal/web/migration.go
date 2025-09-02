@@ -334,10 +334,20 @@ func (w *MigrationWizard) PrepareTargetHandler(rw http.ResponseWriter, r *http.R
 	// Use the restore manager to restore the initial snapshot from backup server
 	// IMPORTANT: This may overwrite existing data on target if target dataset already exists
 	// The restore manager should handle this safely with appropriate warnings
-	job, err := w.restoreManager.RestoreSnapshotFromDataset(req.SourceDataset, req.SnapshotName, req.TargetDataset)
+	job, err := w.restoreManager.StartRestoreFromDatasetWithTracking(req.SourceDataset, req.SnapshotName, req.TargetDataset)
 	if err != nil {
-		log.Printf("Target node: Failed to start restore: %v", err)
-		http.Error(rw, fmt.Sprintf("Failed to start restore: %v", err), http.StatusInternalServerError)
+		if err.Error() == "restore operation already in progress" {
+			log.Printf("Target node: Restore blocked - operation already in progress")
+			rw.Header().Set("Content-Type", "application/json")
+			rw.WriteHeader(http.StatusConflict)
+			json.NewEncoder(rw).Encode(map[string]interface{}{
+				"success": false,
+				"error":   "restore operation already in progress",
+			})
+		} else {
+			log.Printf("Target node: Failed to start restore: %v", err)
+			http.Error(rw, fmt.Sprintf("Failed to start restore: %v", err), http.StatusInternalServerError)
+		}
 		return
 	}
 	
@@ -374,7 +384,7 @@ func (w *MigrationWizard) FinalRestoreHandler(rw http.ResponseWriter, r *http.Re
 	
 	// Use the restore manager to restore the final incremental snapshot from backup server
 	// This will be an incremental restore on top of the initial snapshot already restored
-	job, err := w.restoreManager.RestoreSnapshotFromDataset(req.SourceDataset, req.SnapshotName, req.TargetDataset)
+	job, err := w.restoreManager.StartRestoreFromDatasetWithTracking(req.SourceDataset, req.SnapshotName, req.TargetDataset)
 	if err != nil {
 		log.Printf("Target node: Failed to start final restore: %v", err)
 		http.Error(rw, fmt.Sprintf("Failed to start final restore: %v", err), http.StatusInternalServerError)

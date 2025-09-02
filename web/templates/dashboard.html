@@ -203,30 +203,6 @@
             }
         }
 
-        async function restore() {
-            const snapshot = document.getElementById('restoreSnapshot').value;
-            const dataset = document.getElementById('restoreDataset').value;
-            
-            if (!snapshot || !dataset) {
-                alert('Please enter both snapshot name and target dataset');
-                return;
-            }
-            
-            if (!confirm('This will overwrite the target dataset. Are you sure?')) {
-                return;
-            }
-            
-            try {
-                await fetch('/api/restore', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ snapshot, dataset })
-                });
-                alert('Restore started');
-            } catch (error) {
-                alert('Failed to start restore: ' + error.message);
-            }
-        }
 
         async function loadRemoteDatasets() {
             try {
@@ -322,7 +298,7 @@
             }
             
             try {
-                await fetch('/api/restore', {
+                const response = await fetch('/api/restore', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ 
@@ -331,6 +307,17 @@
                         source_dataset: sourceDataset
                     })
                 });
+                
+                if (response.status === 409) {
+                    const data = await response.json();
+                    alert('Cannot start restore: ' + data.error);
+                    return;
+                }
+                
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                
                 alert('Restore started');
             } catch (error) {
                 alert('Failed to start restore: ' + error.message);
