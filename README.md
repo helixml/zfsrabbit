@@ -1,18 +1,35 @@
 # ZFSRabbit 🐰
+## ZFS Snapshot Replication & Cross-Dataset Restore Server with Monitoring & Alerts
 
-A ZFS replication and monitoring server written in Go that provides automated snapshot management, remote replication via SSH/mbuffer, disk health monitoring, and email alerting.
+A comprehensive ZFS backup solution written in Go that provides automated snapshot management, cross-dataset restoration, remote replication via SSH/mbuffer, system health monitoring, and multi-channel alerting through email and Slack integration.
 
 ## Features
 
+### Core Backup & Replication
 - **Automated Snapshots**: Configurable cron-based snapshot creation and cleanup
-- **Remote Replication**: ZFS send/receive over SSH with mbuffer for efficiency
-- **Incremental Backups**: Automatically detects and uses incremental snapshots
-- **Disk Monitoring**: SMART data monitoring and ZFS pool health checks
-- **Email Alerts**: Configurable email notifications for system issues
-- **Slack Integration**: Webhook-based alerts and slash commands for full control
-- **Web Interface**: Simple web UI for monitoring and manual operations
-- **Restore Functionality**: Web-based restore operations with job tracking
-- **Systemd Integration**: Runs as a systemd service with proper logging
+- **Remote Replication**: ZFS send/receive over SSH with mbuffer for high-performance transfers
+- **Incremental Backups**: Automatically detects and uses incremental snapshots to minimize transfer time
+- **Cross-Dataset Restore**: Restore from any dataset on the remote server, not just your own
+- **Multi-Instance Support**: Multiple ZFSRabbit servers can backup to the same remote server
+
+### Monitoring & Health
+- **ZFS Pool Monitoring**: Real-time pool health, scrub status, and error detection
+- **SMART Disk Monitoring**: Temperature monitoring, reallocated sectors, pending sectors
+- **System Health Dashboard**: Web-based overview of all monitored components
+- **Proactive Alerting**: Configurable alert cooldowns and thresholds
+
+### User Interfaces
+- **Web Interface**: Full-featured web UI for monitoring, manual operations, and restore management
+- **Slack Integration**: Complete slash command interface (`/zfsrabbit status`, `/zfsrabbit snapshot`, etc.)
+- **REST API**: Programmatic access to all functionality
+- **Job Tracking**: Real-time restore job progress with status updates
+
+### Enterprise Features
+- **Multi-Channel Alerts**: Email (SMTP/TLS) and Slack webhook notifications
+- **Remote Dataset Discovery**: Browse and restore from all datasets on remote server
+- **Restore Job Management**: Track multiple concurrent restore operations
+- **Comprehensive Test Suite**: Full unit test coverage for reliable deployment
+- **Systemd Integration**: Production-ready service with proper logging
 
 ## Requirements
 
@@ -142,9 +159,9 @@ The web interface provides:
 - Snapshot management
 - Manual snapshot creation
 - Scrub operations
-- **Multi-dataset browsing** - View all datasets on remote server
-- **Cross-dataset restore** - Restore from any remote dataset to local
-- Restore job tracking
+- **Multi-dataset browsing** - View all datasets on remote server from any ZFSRabbit instance
+- **Cross-dataset restore** - Restore from any remote dataset to local system
+- **Real-time restore tracking** - Monitor restore job progress with detailed status updates
 
 ### Slack Commands
 
@@ -243,6 +260,24 @@ ssh:
 ```
 
 Both instances can see and restore from each other's remote datasets.
+
+## Development
+
+### Building from Source
+```bash
+# Clone repository
+git clone https://github.com/yourusername/zfsrabbit.git
+cd zfsrabbit
+
+# Run tests (no ZFS required for unit tests)
+go test -v ./...
+
+# Build binary
+go build -o zfsrabbit .
+```
+
+### Testing
+ZFSRabbit includes comprehensive unit tests with mock infrastructure, allowing development and testing without requiring actual ZFS pools or SSH servers. All core functionality is covered including HTTP endpoints, alert systems, restore job management, and Slack integration.
 
 ## Troubleshooting
 
