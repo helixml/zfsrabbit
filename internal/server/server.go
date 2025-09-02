@@ -106,7 +106,7 @@ func (s *Server) Stop() {
 }
 
 func checkSystemDependencies() error {
-	requiredCommands := []string{"zfs", "zpool", "mbuffer", "nvme", "smartctl"}
+	requiredCommands := []string{"zfs", "zpool", "mbuffer", "pv", "nvme", "smartctl"}
 
 	for _, cmd := range requiredCommands {
 		if _, err := exec.LookPath(cmd); err != nil {
@@ -123,6 +123,7 @@ func getInstallHint(cmd string) string {
 		"zfs":      "zfsutils-linux package",
 		"zpool":    "zfsutils-linux package",
 		"mbuffer":  "mbuffer package",
+		"pv":       "pv package (pipe viewer for progress tracking)",
 		"nvme":     "nvme-cli package",
 		"smartctl": "smartmontools package",
 	}

@@ -15,7 +15,9 @@
       "Bash(staticcheck:*)",
       "Bash(go install:*)",
       "Bash(find:*)",
-      "Bash(zfs help:*)"
+      "Bash(zfs help:*)",
+      "Bash(zfs list:*)",
+      "Bash(nvme help:*)"
     ],
     "deny": [],
     "ask": []

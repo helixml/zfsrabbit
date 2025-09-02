@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ZFSRabbit - ZFS Replication Server</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .header { border-bottom: 2px solid #007cba; padding-bottom: 20px; margin-bottom: 30px; }
+        .header h1 { color: #007cba; margin: 0; }
+        .section { margin-bottom: 30px; padding: 20px; border: 1px solid #ddd; border-radius: 4px; }
+        .section h2 { margin-top: 0; color: #333; }
+        .button { background: #007cba; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; margin-right: 10px; }
+        .button:hover { background: #005a87; }
+        .button.danger { background: #dc3545; }
+        .button.danger:hover { background: #c82333; }
+        .status { padding: 10px; border-radius: 4px; margin: 10px 0; }
+        .status.online { background: #d4edda; border: 1px solid #c3e6cb; color: #155724; }
+        .status.offline { background: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; }
+        .status.degraded { background: #fff3cd; border: 1px solid #ffeaa7; color: #856404; }
+        .snapshots { max-height: 300px; overflow-y: auto; }
+        .snapshot { display: flex; justify-content: space-between; align-items: center; padding: 8px; border-bottom: 1px solid #eee; }
+        .logs { max-height: 200px; overflow-y: auto; background: #f8f9fa; padding: 10px; font-family: monospace; font-size: 12px; }
+        .dataset { background: #f8f9fa; padding: 10px; margin: 5px 0; border-radius: 4px; border-left: 4px solid #007cba; }
+        .dataset.local { border-left-color: #28a745; }
+        .dataset.remote { border-left-color: #ffc107; }
+        .snapshots-list { max-height: 100px; overflow-y: auto; font-size: 12px; margin-top: 5px; }
+        select, input[type="text"] { padding: 8px; margin: 5px; border: 1px solid #ddd; border-radius: 4px; }
+        #refreshBtn { position: fixed; top: 20px; right: 20px; }
+        .warning-box { background: #ff6b6b; color: white; padding: 15px; border-radius: 8px; margin: 15px 0; border: 2px solid #e55555; }
+        .warning-box h3 { margin: 0 0 10px 0; font-size: 18px; }
+        .warning-box ul { margin: 10px 0; padding-left: 20px; }
+        .confirmation-box { background: #fff3cd; border: 2px solid #ffc107; padding: 15px; border-radius: 8px; margin: 15px 0; display: none; }
+        .confirmation-box.show { display: block; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🐰 ZFSRabbit</h1>
+            <p>ZFS Replication & Monitoring Server</p>
+            <button id="refreshBtn" class="button" onclick="location.reload()">Refresh</button>
+        </div>
+
+        <div class="section">
+            <h2>System Status</h2>
+            <div id="systemStatus">Loading...</div>
+        </div>
+
+        <div class="section">
+            <h2>ZFS Snapshots</h2>
+            <button class="button" onclick="triggerSnapshot()">Create Snapshot</button>
+            <div id="snapshots">Loading...</div>
+        </div>
+
+        <div class="section">
+            <h2>ZFS Pools</h2>
+            <button class="button" onclick="triggerScrub()">Start Scrub</button>
+            <div id="poolStatus">Loading...</div>
+        </div>
+
+        <div class="section">
+            <h2>Remote Datasets</h2>
+            <div id="remoteDatasets">Loading remote datasets...</div>
+        </div>
+
+        <div class="section">
+            <h2>⚠️ Restore Operations</h2>
+            
+            <div class="warning-box">
+                <h3>🚨 CRITICAL WARNING: DESTRUCTIVE OPERATION</h3>
+                <p><strong>ZFS restore operations can cause PERMANENT DATA LOSS!</strong></p>
+                <ul>
+                    <li><strong>STOP all applications</strong> writing to the target filesystem</li>
+                    <li><strong>Backup important data</strong> before proceeding</li>
+                    <li>Restore will <strong>roll back to snapshot</strong>, destroying newer changes</li>
+                    <li>This action <strong>cannot be undone</strong></li>
+                </ul>
+                <p><strong>Only proceed if you understand the risks!</strong></p>
+            </div>
+            
+            <select id="restoreSourceDataset">
+                <option value="">Select source dataset...</option>
+            </select>
+            <select id="restoreSnapshot">
+                <option value="">Select snapshot...</option>
+            </select>
+            <input type="text" id="restoreTargetDataset" placeholder="Target dataset">
+            <button class="button danger" onclick="restore()">⚠️ Start Restore</button>
+            
+            <div id="restoreJobs">
+                <h3>Active Restore Jobs</h3>
+                <div id="restoreJobsList">Loading...</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>🚀 Workload Migration</h2>
+            <p>Migrate your application from this server to another server with minimal downtime.</p>
+            <button class="button" onclick="window.location.href='/migration'">Start Migration Wizard</button>
+            <p style="color: #666; font-size: 14px; margin-top: 10px;">
+                The migration wizard will guide you through the process of moving your workload 
+                to another server via the backup server with step-by-step instructions.
+            </p>
+        </div>
+    </div>
+
+    <script>
+        async function loadStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+                
+                let statusHtml = '<div class="status ' + (data.healthy ? 'online' : 'offline') + '">' +
+                    'System: ' + (data.healthy ? 'Healthy' : 'Issues Detected') + '</div>';
+                
+                // Add pending sends status
+                if (data.pendingSends && data.pendingSends.length > 0) {
+                    statusHtml += '<div class="status degraded">' +
+                        'Pending Sends: ' + data.pendingSends.length + ' snapshots failed to sync ' +
+                        '<button class="button" onclick="retryPendingSends()" style="margin-left: 10px;">Retry</button>' +
+                        '</div>';
+                    // Show the pending snapshots
+                    statusHtml += '<div style="font-size: 12px; margin-top: 5px;">' +
+                        'Failed snapshots: ' + data.pendingSends.join(', ') + '</div>';
+                }
+                
+                document.getElementById('systemStatus').innerHTML = statusHtml;
+                
+                if (data.pools) {
+                    let poolsHtml = '';
+                    for (const [pool, status] of Object.entries(data.pools)) {
+                        const statusClass = status.State === 'ONLINE' ? 'online' : 'degraded';
+                        poolsHtml += '<div class="status ' + statusClass + '">' + pool + ': ' + status.State + '</div>';
+                    }
+                    document.getElementById('poolStatus').innerHTML = poolsHtml;
+                }
+            } catch (error) {
+                console.error('Failed to load status:', error);
+            }
+        }
+
+        async function loadSnapshots() {
+            try {
+                const response = await fetch('/api/snapshots');
+                const snapshots = await response.json();
+                
+                let html = '<div class="snapshots">';
+                snapshots.forEach(snap => {
+                    html += '<div class="snapshot">' +
+                           '<span>' + snap.name + ' (' + snap.created + ')</span>' +
+                           '<span>' + snap.used + '</span>' +
+                           '</div>';
+                });
+                html += '</div>';
+                
+                document.getElementById('snapshots').innerHTML = html;
+            } catch (error) {
+                console.error('Failed to load snapshots:', error);
+            }
+        }
+
+        async function triggerSnapshot() {
+            try {
+                const response = await fetch('/api/trigger/snapshot', { method: 'POST' });
+                if (response.status === 409) {
+                    const data = await response.json();
+                    alert('Cannot start snapshot: ' + data.error);
+                    return;
+                }
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                alert('Snapshot creation started');
+                setTimeout(loadSnapshots, 2000);
+            } catch (error) {
+                alert('Failed to trigger snapshot: ' + error.message);
+            }
+        }
+
+        async function triggerScrub() {
+            try {
+                await fetch('/api/trigger/scrub', { method: 'POST' });
+                alert('Scrub started');
+            } catch (error) {
+                alert('Failed to trigger scrub: ' + error.message);
+            }
+        }
+
+        async function retryPendingSends() {
+            try {
+                const response = await fetch('/api/trigger/retry', { method: 'POST' });
+                if (response.ok) {
+                    alert('All pending snapshots sent successfully!');
+                    loadStatus(); // Refresh status to update pending sends
+                } else {
+                    const error = await response.text();
+                    alert('Retry failed: ' + error);
+                }
+            } catch (error) {
+                alert('Failed to retry pending sends: ' + error.message);
+            }
+        }
+
+        async function restore() {
+            const snapshot = document.getElementById('restoreSnapshot').value;
+            const dataset = document.getElementById('restoreDataset').value;
+            
+            if (!snapshot || !dataset) {
+                alert('Please enter both snapshot name and target dataset');
+                return;
+            }
+            
+            if (!confirm('This will overwrite the target dataset. Are you sure?')) {
+                return;
+            }
+            
+            try {
+                await fetch('/api/restore', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ snapshot, dataset })
+                });
+                alert('Restore started');
+            } catch (error) {
+                alert('Failed to start restore: ' + error.message);
+            }
+        }
+
+        async function loadRemoteDatasets() {
+            try {
+                const response = await fetch('/api/remote/datasets');
+                const data = await response.json();
+                
+                let html = '';
+                
+                // Show local dataset
+                html += '<div class="dataset local">' +
+                       '<strong>📂 Local Dataset (This Instance):</strong> ' + data.local_dataset +
+                       '<div class="snapshots-list">';
+                
+                if (data.managed_by_this_instance.snapshots) {
+                    data.managed_by_this_instance.snapshots.forEach(snap => {
+                        html += '<div>• ' + snap + '</div>';
+                    });
+                }
+                html += '</div></div>';
+                
+                // Show available datasets for restore
+                if (data.available_for_restore.length > 0) {
+                    html += '<div class="dataset remote">' +
+                           '<strong>📥 Available for Restore:</strong><br>';
+                    
+                    data.available_for_restore.forEach(item => {
+                        html += '<div style="margin: 10px 0;"><strong>' + item.dataset + '</strong> (' + 
+                               item.snapshots.length + ' snapshots, latest: ' + item.latest_snapshot + ')' +
+                               '<div class="snapshots-list">';
+                        
+                        item.snapshots.forEach(snap => {
+                            html += '<div>• ' + snap + '</div>';
+                        });
+                        html += '</div></div>';
+                    });
+                    html += '</div>';
+                }
+                
+                document.getElementById('remoteDatasets').innerHTML = html;
+                
+                // Populate restore dropdown
+                const sourceSelect = document.getElementById('restoreSourceDataset');
+                sourceSelect.innerHTML = '<option value="">Select source dataset...</option>';
+                
+                data.available_for_restore.forEach(item => {
+                    const option = document.createElement('option');
+                    option.value = item.dataset;
+                    option.textContent = item.dataset + ' (' + item.snapshots.length + ' snapshots)';
+                    sourceSelect.appendChild(option);
+                });
+                
+            } catch (error) {
+                document.getElementById('remoteDatasets').innerHTML = 'Failed to load remote datasets: ' + error.message;
+            }
+        }
+
+        async function updateSnapshotList() {
+            const sourceDataset = document.getElementById('restoreSourceDataset').value;
+            const snapshotSelect = document.getElementById('restoreSnapshot');
+            
+            snapshotSelect.innerHTML = '<option value="">Select snapshot...</option>';
+            
+            if (!sourceDataset) return;
+            
+            try {
+                const response = await fetch('/api/remote/dataset/' + encodeURIComponent(sourceDataset));
+                const data = await response.json();
+                
+                data.snapshots.forEach(snapshot => {
+                    const option = document.createElement('option');
+                    option.value = snapshot;
+                    option.textContent = snapshot;
+                    snapshotSelect.appendChild(option);
+                });
+                
+            } catch (error) {
+                console.error('Failed to load snapshots:', error);
+            }
+        }
+
+        async function restore() {
+            const sourceDataset = document.getElementById('restoreSourceDataset').value;
+            const snapshot = document.getElementById('restoreSnapshot').value;
+            const targetDataset = document.getElementById('restoreTargetDataset').value;
+            
+            if (!sourceDataset || !snapshot || !targetDataset) {
+                alert('Please select source dataset, snapshot, and enter target dataset');
+                return;
+            }
+            
+            if (!confirm('This will overwrite the target dataset. Are you sure?')) {
+                return;
+            }
+            
+            try {
+                await fetch('/api/restore', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        snapshot: snapshot, 
+                        dataset: targetDataset,
+                        source_dataset: sourceDataset
+                    })
+                });
+                alert('Restore started');
+            } catch (error) {
+                alert('Failed to start restore: ' + error.message);
+            }
+        }
+
+        // Event listeners
+        document.getElementById('restoreSourceDataset').addEventListener('change', updateSnapshotList);
+
+        // Load initial data
+        loadStatus();
+        loadSnapshots();
+        loadRemoteDatasets();
+        
+        // Refresh every 30 seconds
+        setInterval(() => {
+            loadStatus();
+            loadSnapshots();
+            loadRemoteDatasets();
+        }, 60000); // Refresh remote datasets less frequently
+    </script>
+</body>
+</html>

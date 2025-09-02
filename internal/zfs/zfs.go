@@ -113,6 +113,7 @@ func (m *Manager) ListSnapshots() ([]Snapshot, error) {
 		if len(fields) >= 4 {
 			parts := strings.Split(fields[0], "@")
 			if len(parts) == 2 {
+				// ZFS creation date format: "Wed Jul 17 18:00 2024"
 				created, _ := time.Parse("Mon Jan 2 15:04 2006", fields[1])
 				snapshots = append(snapshots, Snapshot{
 					Name:    parts[1],

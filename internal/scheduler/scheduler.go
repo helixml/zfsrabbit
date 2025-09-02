@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -13,13 +14,15 @@ import (
 )
 
 type Scheduler struct {
-	cron       *cron.Cron
-	config     *config.Config
-	zfsManager *zfs.Manager
-	transport  *transport.SSHTransport
-	alerter    SyncAlerter
-	ctx        context.Context
-	cancel     context.CancelFunc
+	cron         *cron.Cron
+	config       *config.Config
+	zfsManager   *zfs.Manager
+	transport    *transport.SSHTransport
+	alerter      SyncAlerter
+	ctx          context.Context
+	cancel       context.CancelFunc
+	pendingSends []string // Snapshots that failed to send and need retry
+	sendMutex    sync.Mutex // Prevents concurrent sends to same backup server
 }
 
 type SyncAlerter interface {
@@ -50,6 +53,10 @@ func (s *Scheduler) Start() error {
 		return fmt.Errorf("failed to add scrub job: %w", err)
 	}
 
+	if _, err := s.cron.AddFunc(s.config.Schedule.RetryCron, s.performRetry); err != nil {
+		return fmt.Errorf("failed to add retry job: %w", err)
+	}
+
 	s.cron.Start()
 	log.Println("Scheduler started")
 	return nil
@@ -62,7 +69,18 @@ func (s *Scheduler) Stop() {
 }
 
 func (s *Scheduler) performSnapshot() {
+	// Use mutex to prevent concurrent sends to same backup server
+	s.sendMutex.Lock()
+	defer s.sendMutex.Unlock()
+	
 	log.Println("Starting scheduled snapshot")
+	
+	// First, try to send any pending snapshots from previous failures
+	if len(s.pendingSends) > 0 {
+		log.Printf("Attempting to retry %d pending snapshots", len(s.pendingSends))
+		s.retryPendingSendsUnsafe() // Don't fail if retry fails, just log
+	}
+	
 	startTime := time.Now()
 
 	timestamp := time.Now().Format("2006-01-02_15-04-05")
@@ -79,6 +97,10 @@ func (s *Scheduler) performSnapshot() {
 	if err := s.sendSnapshot(snapshotName); err != nil {
 		log.Printf("Failed to send snapshot: %v", err)
 		s.alerter.SendSyncFailure(snapshotName, s.config.ZFS.Dataset, err)
+		
+		// Add to pending sends for retry
+		s.pendingSends = append(s.pendingSends, snapshotName)
+		log.Printf("Added snapshot %s to retry queue (%d pending)", snapshotName, len(s.pendingSends))
 		return
 	}
 
@@ -94,8 +116,7 @@ func (s *Scheduler) performSnapshot() {
 func (s *Scheduler) sendSnapshot(snapshotName string) error {
 	remoteSnapshots, err := s.transport.ListRemoteSnapshots()
 	if err != nil {
-		log.Printf("Failed to list remote snapshots, performing full send: %v", err)
-		return s.sendFullSnapshot(snapshotName)
+		return fmt.Errorf("failed to list remote snapshots, aborting sync to prevent data loss: %w", err)
 	}
 
 	if len(remoteSnapshots) == 0 {
@@ -210,6 +231,12 @@ func (s *Scheduler) performScrub() {
 }
 
 func (s *Scheduler) TriggerSnapshot() error {
+	// Check if a send is already in progress
+	if !s.sendMutex.TryLock() {
+		return fmt.Errorf("snapshot operation already in progress")
+	}
+	s.sendMutex.Unlock() // Release immediately since performSnapshot will acquire it
+	
 	go s.performSnapshot()
 	return nil
 }
@@ -217,4 +244,65 @@ func (s *Scheduler) TriggerSnapshot() error {
 func (s *Scheduler) TriggerScrub() error {
 	go s.performScrub()
 	return nil
+}
+
+// performRetry runs on scheduled basis to retry failed snapshot sends
+func (s *Scheduler) performRetry() {
+	s.sendMutex.Lock()
+	defer s.sendMutex.Unlock()
+	
+	if len(s.pendingSends) == 0 {
+		return // Nothing to retry
+	}
+	
+	log.Printf("Scheduled retry: attempting to send %d pending snapshots", len(s.pendingSends))
+	s.retryPendingSendsUnsafe()
+}
+
+// RetryPendingSends attempts to send any snapshots that failed to send previously (thread-safe)
+func (s *Scheduler) RetryPendingSends() error {
+	s.sendMutex.Lock()
+	defer s.sendMutex.Unlock()
+	
+	return s.retryPendingSendsUnsafe()
+}
+
+// retryPendingSendsUnsafe does the actual retry work (assumes caller holds sendMutex)
+func (s *Scheduler) retryPendingSendsUnsafe() error {
+	if len(s.pendingSends) == 0 {
+		log.Printf("No pending snapshots to retry")
+		return nil
+	}
+	
+	log.Printf("Retrying %d pending snapshot sends", len(s.pendingSends))
+	
+	// Process pending sends
+	var stillPending []string
+	for _, snapshotName := range s.pendingSends {
+		log.Printf("Retrying send for snapshot: %s", snapshotName)
+		
+		if err := s.sendSnapshot(snapshotName); err != nil {
+			log.Printf("Retry failed for snapshot %s: %v", snapshotName, err)
+			stillPending = append(stillPending, snapshotName)
+		} else {
+			log.Printf("Successfully sent snapshot on retry: %s", snapshotName)
+			s.alerter.SendSyncSuccess(snapshotName, s.config.ZFS.Dataset, 0)
+		}
+	}
+	
+	// Update pending list with only failed retries
+	s.pendingSends = stillPending
+	
+	if len(s.pendingSends) > 0 {
+		log.Printf("%d snapshots still pending after retry", len(s.pendingSends))
+		return fmt.Errorf("%d snapshots still failed to send", len(s.pendingSends))
+	}
+	
+	log.Printf("All pending snapshots successfully sent")
+	return nil
+}
+
+// GetPendingSends returns the list of snapshots that failed to send
+func (s *Scheduler) GetPendingSends() []string {
+	return s.pendingSends
 }

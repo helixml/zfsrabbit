@@ -17,18 +17,22 @@ type RestoreManager struct {
 }
 
 type RestoreJob struct {
-	ID              string
-	SnapshotName    string
-	SourceDataset   string
-	TargetDataset   string
-	Status          string // starting, verifying, safety_check, awaiting_confirmation, restoring, completed, failed
-	Progress        int
-	StartTime       time.Time
-	EndTime         *time.Time
-	Error           error
-	RequiresConfirm bool   // True if destructive operation needs user confirmation
-	SafetyWarning   string // Warning message about data loss
-	ForceConfirmed  bool   // Set to true by user to proceed with destructive operation
+	ID               string
+	SnapshotName     string
+	SourceDataset    string
+	TargetDataset    string
+	Status           string // starting, verifying, safety_check, awaiting_confirmation, restoring, completed, failed
+	Progress         int
+	BytesTransferred int64   // Actual bytes transferred
+	TotalBytes       int64   // Total bytes to transfer (estimated)
+	TransferRate     float64 // Current transfer rate in MB/sec
+	ETA              string  // Estimated time to completion
+	StartTime        time.Time
+	EndTime          *time.Time
+	Error            error
+	RequiresConfirm  bool   // True if destructive operation needs user confirmation
+	SafetyWarning    string // Warning message about data loss
+	ForceConfirmed   bool   // Set to true by user to proceed with destructive operation
 }
 
 func New(transport *transport.SSHTransport, zfsManager *zfs.Manager) *RestoreManager {

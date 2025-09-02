@@ -313,13 +313,12 @@ func (m *Monitor) getSMARTData(device string) (*SMARTData, error) {
 func (m *Monitor) getNVMeSMARTData(device string, smart *SMARTData) (*SMARTData, error) {
 	smart.IsNVMe = true
 
-	// Try nvme-cli first for better NVMe support
-	if err := m.parseNVMeCLI(device, smart); err == nil {
-		return smart, nil
+	// Use nvme-cli - the ONE way to get NVMe SMART data
+	if err := m.parseNVMeCLI(device, smart); err != nil {
+		return nil, fmt.Errorf("failed to get NVMe SMART data using nvme-cli: %w", err)
 	}
 
-	// Fallback to smartctl for NVMe
-	return m.parseSmartctlNVMe(device, smart)
+	return smart, nil
 }
 
 func (m *Monitor) parseNVMeCLI(device string, smart *SMARTData) error {
@@ -400,80 +399,6 @@ func (m *Monitor) parseNVMeCLI(device string, smart *SMARTData) error {
 	}
 
 	return nil
-}
-
-func (m *Monitor) parseSmartctlNVMe(device string, smart *SMARTData) (*SMARTData, error) {
-	cmd := exec.Command("smartctl", "-H", "-A", device)
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, err
-	}
-
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-
-		if strings.Contains(line, "SMART overall-health") {
-			if !strings.Contains(line, "PASSED") {
-				smart.Healthy = false
-				smart.Errors = append(smart.Errors, "SMART health check failed")
-			}
-		}
-
-		// Parse NVMe-specific attributes from smartctl
-		if strings.Contains(line, "Critical Warning:") {
-			fields := strings.Fields(line)
-			if len(fields) >= 3 {
-				if warning, err := strconv.Atoi(strings.TrimPrefix(fields[2], "0x")); err == nil {
-					smart.CriticalWarning = warning
-					if warning > 0 {
-						smart.Healthy = false
-						smart.Errors = append(smart.Errors, fmt.Sprintf("Critical warning: 0x%x", warning))
-					}
-				}
-			}
-		}
-
-		if strings.Contains(line, "Temperature:") {
-			fields := strings.Fields(line)
-			for _, field := range fields {
-				if temp, err := strconv.Atoi(field); err == nil && temp > 0 && temp < 200 {
-					smart.Temperature = temp
-					if temp > 60 {
-						smart.Errors = append(smart.Errors, fmt.Sprintf("High temperature: %d°C", temp))
-					}
-					break
-				}
-			}
-		}
-
-		if strings.Contains(line, "Percentage Used:") {
-			fields := strings.Fields(line)
-			if len(fields) >= 3 {
-				if used, err := strconv.Atoi(strings.TrimSuffix(fields[2], "%")); err == nil {
-					smart.PercentageUsed = used
-					if used > 90 {
-						smart.Errors = append(smart.Errors, fmt.Sprintf("High wear level: %d%%", used))
-					}
-				}
-			}
-		}
-
-		if strings.Contains(line, "Available Spare:") {
-			fields := strings.Fields(line)
-			if len(fields) >= 3 {
-				if spare, err := strconv.Atoi(strings.TrimSuffix(fields[2], "%")); err == nil {
-					smart.AvailableSpare = spare
-					if spare < 10 {
-						smart.Healthy = false
-						smart.Errors = append(smart.Errors, fmt.Sprintf("Low spare capacity: %d%%", spare))
-					}
-				}
-			}
-		}
-	}
-
-	return smart, nil
 }
 
 func (m *Monitor) sendPoolAlert(health *PoolHealth) {

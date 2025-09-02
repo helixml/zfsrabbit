@@ -263,8 +263,18 @@ func (t *SSHTransport) restoreSnapshotFromDataset(remoteDataset, snapshotName, l
 type mbufferReceiver struct {
 	dataset        string
 	size           string
-	forceOverwrite bool   // Use -F flag for destructive operations
-	remoteDataset  string // Source dataset name for proper mapping
+	forceOverwrite bool              // Use -F flag for destructive operations
+	remoteDataset  string            // Source dataset name for proper mapping
+	progressChan   chan ProgressInfo // Channel for real-time progress updates
+}
+
+// ProgressInfo contains real-time transfer progress data
+type ProgressInfo struct {
+	BytesTransferred int64
+	TotalBytes       int64
+	TransferRate     float64 // MB/sec
+	ETA              string
+	Percentage       float64
 }
 
 func (m *mbufferReceiver) Write(p []byte) (n int, err error) {
@@ -282,7 +292,9 @@ func (m *mbufferReceiver) Write(p []byte) (n int, err error) {
 		receiveFlags += " -F" // Add force flag for destructive operations
 	}
 
-	safeCommand = fmt.Sprintf("mbuffer -s 128k -m %s | zfs receive %s %s",
+	// Use pv for progress monitoring with mbuffer for buffering
+	// pv provides real-time transfer rate, ETA, and progress percentage
+	safeCommand = fmt.Sprintf("pv -f -r -a -b | mbuffer -s 128k -m %s | zfs receive %s %s",
 		sanitizedSize, receiveFlags, sanitizedDataset)
 
 	cmd := exec.Command("sh", "-c", safeCommand)

@@ -153,6 +153,38 @@ func (h *CommandHandler) processCommand(req SlashCommandRequest) SlashCommandRes
 			}
 		}
 		return h.browseRemoteDataset(args[1])
+	case "migrate":
+		if len(args) < 2 {
+			return SlashCommandResponse{
+				ResponseType: "ephemeral",
+				Text:         "Usage: `migrate start <source-dataset> <target-host> <target-dataset>` or `migrate status` or `migrate cutover <job-id>`",
+			}
+		}
+		switch args[1] {
+		case "start":
+			if len(args) != 5 {
+				return SlashCommandResponse{
+					ResponseType: "ephemeral",
+					Text:         "Usage: `migrate start <source-dataset> <target-host> <target-dataset>`",
+				}
+			}
+			return h.startMigration(args[2], args[3], args[4])
+		case "status":
+			return h.getMigrationStatus()
+		case "cutover":
+			if len(args) != 3 {
+				return SlashCommandResponse{
+					ResponseType: "ephemeral",
+					Text:         "Usage: `migrate cutover <job-id>`",
+				}
+			}
+			return h.requestCutover(args[2])
+		default:
+			return SlashCommandResponse{
+				ResponseType: "ephemeral",
+				Text:         "Usage: `migrate start|status|cutover`",
+			}
+		}
 	case "help":
 		return h.showHelp()
 	default:
@@ -176,6 +208,9 @@ func (h *CommandHandler) showHelp() SlashCommandResponse {
 • *jobs* - Show active restore jobs
 • *remote* - Show all remote datasets
 • *browse <dataset>* - Browse snapshots in a remote dataset
+• *migrate start <source> <host> <target>* - Start workload migration
+• *migrate status* - Show migration progress
+• *migrate cutover <job-id>* - Complete migration cutover
 • *help* - Show this help message
 
 Example: ` + "`/zfsrabbit status`"
@@ -423,7 +458,12 @@ func (h *CommandHandler) getRestoreJobs() SlashCommandResponse {
 			emoji = "❌"
 		}
 
-		text += fmt.Sprintf("• %s `%s` - %s (%d%%)\n", emoji, job.ID, job.Status, job.Progress)
+		if job.Status == "restoring" && job.TransferRate > 0 {
+			text += fmt.Sprintf("• %s `%s` - %s (%d%%) %.1f MB/s ETA: %s\n",
+				emoji, job.ID, job.Status, job.Progress, job.TransferRate, job.ETA)
+		} else {
+			text += fmt.Sprintf("• %s `%s` - %s (%d%%)\n", emoji, job.ID, job.Status, job.Progress)
+		}
 		if job.Error != nil {
 			text += fmt.Sprintf("  Error: %s\n", job.Error.Error())
 		}
@@ -502,5 +542,30 @@ func (h *CommandHandler) browseRemoteDataset(dataset string) SlashCommandRespons
 	return SlashCommandResponse{
 		ResponseType: "ephemeral",
 		Text:         text,
+	}
+}
+
+// Migration command handlers
+func (h *CommandHandler) startMigration(sourceDataset, targetHost, targetDataset string) SlashCommandResponse {
+	// This would need the migration manager to be added to CommandHandler
+	// For now, return a placeholder response
+	return SlashCommandResponse{
+		ResponseType: "ephemeral",
+		Text: fmt.Sprintf("🚀 Migration started: %s -> %s:%s\n⚠️ Migration feature requires migration manager integration",
+			sourceDataset, targetHost, targetDataset),
+	}
+}
+
+func (h *CommandHandler) getMigrationStatus() SlashCommandResponse {
+	return SlashCommandResponse{
+		ResponseType: "ephemeral",
+		Text:         "📊 *Migration Status:*\n⚠️ No active migrations (migration manager integration required)",
+	}
+}
+
+func (h *CommandHandler) requestCutover(jobID string) SlashCommandResponse {
+	return SlashCommandResponse{
+		ResponseType: "ephemeral",
+		Text:         fmt.Sprintf("🔄 Cutover requested for job `%s`\n⚠️ Migration feature requires migration manager integration", jobID),
 	}
 }

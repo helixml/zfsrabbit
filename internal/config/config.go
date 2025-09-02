@@ -64,6 +64,7 @@ type SlackConfig struct {
 type ScheduleConfig struct {
 	SnapshotCron    string        `yaml:"snapshot_cron"`
 	ScrubCron       string        `yaml:"scrub_cron"`
+	RetryCron       string        `yaml:"retry_cron"`
 	MonitorInterval time.Duration `yaml:"monitor_interval"`
 }
 
@@ -93,8 +94,9 @@ func Load(path string) (*Config, error) {
 			AlertOnErrors: true,
 		},
 		Schedule: ScheduleConfig{
-			SnapshotCron:    "0 2 * * *", // Daily at 2 AM
-			ScrubCron:       "0 3 * * 0", // Weekly on Sunday at 3 AM
+			SnapshotCron:    "0 2 * * *",  // Daily at 2 AM
+			ScrubCron:       "0 3 * * 0",  // Weekly on Sunday at 3 AM
+			RetryCron:       "*/15 * * * *", // Every 15 minutes
 			MonitorInterval: 5 * time.Minute,
 		},
 	}
@@ -198,6 +200,10 @@ func (c *Config) Validate() error {
 
 	if err := validateCronExpression(c.Schedule.ScrubCron); err != nil {
 		return fmt.Errorf("invalid scrub_cron expression '%s': %w", c.Schedule.ScrubCron, err)
+	}
+
+	if err := validateCronExpression(c.Schedule.RetryCron); err != nil {
+		return fmt.Errorf("invalid retry_cron expression '%s': %w", c.Schedule.RetryCron, err)
 	}
 
 	return nil

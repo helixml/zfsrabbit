@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZFSRabbit - Migration Wizard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.1/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        .step-indicator {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 2rem;
+        }
+        .step-item {
+            flex: 1;
+            text-align: center;
+            position: relative;
+        }
+        .step-item:not(:last-child)::after {
+            content: '';
+            position: absolute;
+            top: 20px;
+            right: -50%;
+            width: 100%;
+            height: 2px;
+            background: #dee2e6;
+            z-index: 1;
+        }
+        .step-item.active::after {
+            background: #0d6efd;
+        }
+        .step-item.completed::after {
+            background: #198754;
+        }
+        .step-circle {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #dee2e6;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            z-index: 2;
+            color: #6c757d;
+            font-weight: bold;
+        }
+        .step-item.active .step-circle {
+            background: #0d6efd;
+            color: white;
+        }
+        .step-item.completed .step-circle {
+            background: #198754;
+            color: white;
+        }
+        .migration-card {
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+        }
+        .target-instruction {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+        .warning-box {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+        .success-box {
+            background: #d1edff;
+            border: 1px solid #b3d7ff;
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-dark bg-primary">
+        <div class="container">
+            <a class="navbar-brand" href="/">
+                <i class="bi bi-hdd-rack"></i> ZFSRabbit - Migration Wizard
+            </a>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <div id="startMigration" class="migration-card">
+            <h2><i class="bi bi-arrow-left-right"></i> Start New Migration</h2>
+            <p class="text-muted">Move your workload from this server to another server via the backup server.</p>
+            
+            <form id="migrationForm">
+                <div class="row">
+                    <div class="col-md-4">
+                        <label for="sourceDataset" class="form-label">Source Dataset</label>
+                        <input type="text" class="form-control" id="sourceDataset" placeholder="data/myapp" required>
+                        <div class="form-text">The dataset on this server to migrate</div>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="targetHost" class="form-label">Target Server</label>
+                        <input type="text" class="form-control" id="targetHost" placeholder="server2.example.com" required>
+                        <div class="form-text">The destination server hostname</div>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="targetDataset" class="form-label">Target Dataset</label>
+                        <input type="text" class="form-control" id="targetDataset" placeholder="data/myapp" required>
+                        <div class="form-text">The dataset name on target server</div>
+                    </div>
+                </div>
+                <div class="mt-3">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-play-circle"></i> Start Migration Wizard
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <div id="migrationWizard" style="display: none;">
+            <!-- Step indicator -->
+            <div class="step-indicator" id="stepIndicator">
+                <!-- Will be populated by JavaScript -->
+            </div>
+
+            <!-- Current step content -->
+            <div class="migration-card">
+                <div id="stepContent">
+                    <!-- Will be populated by JavaScript -->
+                </div>
+                
+                <div class="d-flex justify-content-between mt-4">
+                    <button id="cancelBtn" class="btn btn-outline-danger">
+                        <i class="bi bi-x-circle"></i> Cancel Migration
+                    </button>
+                    <div>
+                        <button id="prevBtn" class="btn btn-outline-secondary me-2" style="display: none;">
+                            <i class="bi bi-arrow-left"></i> Previous
+                        </button>
+                        <button id="nextBtn" class="btn btn-primary">
+                            <i class="bi bi-arrow-right"></i> Execute Step
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Target node simple interface -->
+        <div id="targetInterface" class="migration-card" style="display: none;">
+            <h3><i class="bi bi-bullseye"></i> Target Node Actions</h3>
+            <p class="text-muted">Use these buttons when instructed by the source node migration wizard.</p>
+            
+            <div class="row">
+                <div class="col-md-6">
+                    <button id="prepareTargetBtn" class="btn btn-success btn-lg w-100 mb-3">
+                        <i class="bi bi-download"></i><br>
+                        Prepare Target Dataset
+                    </button>
+                    <div class="form-text">Click when instructed during initial sync</div>
+                </div>
+                <div class="col-md-6">
+                    <button id="finalRestoreBtn" class="btn btn-warning btn-lg w-100 mb-3">
+                        <i class="bi bi-arrow-clockwise"></i><br>
+                        Start Final Restore
+                    </button>
+                    <div class="form-text">Click when instructed during final sync</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        class MigrationWizard {
+            constructor() {
+                this.currentSession = null;
+                this.steps = [];
+                this.init();
+            }
+
+            init() {
+                // Bind form submission
+                document.getElementById('migrationForm').addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    this.startMigration();
+                });
+
+                // Bind wizard buttons
+                document.getElementById('nextBtn').addEventListener('click', () => this.executeStep());
+                document.getElementById('cancelBtn').addEventListener('click', () => this.cancelMigration());
+                
+                // Bind target interface buttons
+                document.getElementById('prepareTargetBtn').addEventListener('click', () => this.prepareTarget());
+                document.getElementById('finalRestoreBtn').addEventListener('click', () => this.finalRestore());
+
+                // Check for existing migration on load
+                this.refreshStatus();
+                
+                // Auto-refresh every 5 seconds
+                setInterval(() => this.refreshStatus(), 5000);
+            }
+
+            async startMigration() {
+                const formData = {
+                    sourceDataset: document.getElementById('sourceDataset').value,
+                    targetHost: document.getElementById('targetHost').value,
+                    targetDataset: document.getElementById('targetDataset').value
+                };
+
+                try {
+                    const response = await fetch('/api/migration/start', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(formData)
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(await response.text());
+                    }
+
+                    this.currentSession = await response.json();
+                    this.showWizard();
+                } catch (error) {
+                    alert('Failed to start migration: ' + error.message);
+                }
+            }
+
+            async refreshStatus() {
+                try {
+                    const response = await fetch('/api/migration/status');
+                    const data = await response.json();
+                    
+                    if (data.active) {
+                        this.currentSession = data.session;
+                        this.steps = data.steps;
+                        this.showWizard();
+                        this.updateStepContent(data.currentStepInfo);
+                    } else {
+                        this.steps = data.steps || [];
+                        this.showStartForm();
+                    }
+                } catch (error) {
+                    console.error('Failed to refresh status:', error);
+                }
+            }
+
+            showStartForm() {
+                document.getElementById('startMigration').style.display = 'block';
+                document.getElementById('migrationWizard').style.display = 'none';
+                document.getElementById('targetInterface').style.display = 'block';
+            }
+
+            showWizard() {
+                document.getElementById('startMigration').style.display = 'none';
+                document.getElementById('migrationWizard').style.display = 'block';
+                document.getElementById('targetInterface').style.display = 'none';
+                this.updateStepIndicator();
+            }
+
+            updateStepIndicator() {
+                const indicator = document.getElementById('stepIndicator');
+                indicator.innerHTML = '';
+                
+                this.steps.forEach((step, index) => {
+                    const stepItem = document.createElement('div');
+                    stepItem.className = 'step-item';
+                    
+                    if (index < this.currentSession.currentStep) {
+                        stepItem.className += ' completed';
+                    } else if (index === this.currentSession.currentStep) {
+                        stepItem.className += ' active';
+                    }
+
+                    stepItem.innerHTML = `
+                        <div class="step-circle">${index + 1}</div>
+                        <div class="mt-2 small">${step.title}</div>
+                    `;
+                    
+                    indicator.appendChild(stepItem);
+                });
+            }
+
+            updateStepContent(stepInfo) {
+                const content = document.getElementById('stepContent');
+                const session = this.currentSession;
+                
+                let html = `
+                    <h3><i class="bi bi-list-check"></i> Step ${session.currentStep + 1}: ${stepInfo.title}</h3>
+                    <p class="lead">${stepInfo.description}</p>
+                `;
+
+                // Add step-specific content
+                switch (stepInfo.action) {
+                    case 'validate_setup':
+                        html += `
+                            <div class="success-box">
+                                <h5><i class="bi bi-info-circle"></i> Pre-flight Check</h5>
+                                <ul>
+                                    <li>Validating source dataset: <code>${session.sourceDataset}</code></li>
+                                    <li>Testing connectivity to backup server</li>
+                                    <li>Ensuring target server is accessible: <code>${session.targetHost}</code></li>
+                                </ul>
+                            </div>
+                        `;
+                        break;
+
+                    case 'initial_sync':
+                        html += `
+                            <div class="warning-box">
+                                <h5><i class="bi bi-exclamation-triangle"></i> Important</h5>
+                                <p><strong>Keep your application running during this step!</strong> This initial sync will transfer most of your data while your app continues to work normally.</p>
+                            </div>
+                            ${stepInfo.targetAction ? `
+                            <div class="target-instruction">
+                                <h5><i class="bi bi-arrow-right"></i> Action Required on Target Server</h5>
+                                <p><strong>${stepInfo.targetAction}</strong></p>
+                                <p>Go to <code>http://${session.targetHost}:8080/migration</code> and use these values:</p>
+                                <ul>
+                                    <li><strong>Source Dataset:</strong> <code>${session.sourceDataset}</code></li>
+                                    <li><strong>Target Dataset:</strong> <code>${session.targetDataset}</code></li>
+                                    <li><strong>Snapshot Name:</strong> <code>${session.initialSnapshot || 'migrate-initial-' + session.id}</code></li>
+                                </ul>
+                            </div>
+                            ` : ''}
+                        `;
+                        break;
+
+                    case 'confirm_workload_stopped':
+                        html += `
+                            <div class="warning-box">
+                                <h5><i class="bi bi-stop-circle"></i> Stop Your Application</h5>
+                                <p><strong>Before clicking "Execute Step", stop your application on this server!</strong></p>
+                                <ul>
+                                    <li>Stop application services (systemctl stop myapp, docker stop, etc.)</li>
+                                    <li>Ensure no processes are writing to <code>${session.sourceDataset}</code></li>
+                                    <li>Verify application is completely shut down</li>
+                                </ul>
+                                <p class="mb-0"><strong>Only proceed once you've confirmed the application is stopped.</strong></p>
+                            </div>
+                        `;
+                        break;
+
+                    case 'final_sync':
+                        html += `
+                            <div class="success-box">
+                                <h5><i class="bi bi-lightning"></i> Final Sync</h5>
+                                <p>This will be fast! Only changes since the initial sync will be transferred.</p>
+                            </div>
+                            ${stepInfo.targetAction ? `
+                            <div class="target-instruction">
+                                <h5><i class="bi bi-arrow-right"></i> Action Required on Target Server</h5>
+                                <p><strong>${stepInfo.targetAction}</strong></p>
+                                <p>Go to <code>http://${session.targetHost}:8080/migration</code> and use these values:</p>
+                                <ul>
+                                    <li><strong>Source Dataset:</strong> <code>${session.sourceDataset}</code></li>
+                                    <li><strong>Target Dataset:</strong> <code>${session.targetDataset}</code></li>
+                                    <li><strong>Snapshot Name:</strong> <code>${session.finalSnapshot || 'migrate-final-' + session.id}</code></li>
+                                </ul>
+                            </div>
+                            ` : ''}
+                        `;
+                        break;
+
+                    case 'confirm_workload_started':
+                        html += `
+                            <div class="success-box">
+                                <h5><i class="bi bi-play-circle"></i> Start Your Application</h5>
+                                <p><strong>Start your application on the target server: <code>${session.targetHost}</code></strong></p>
+                                <ul>
+                                    <li>SSH to <code>${session.targetHost}</code></li>
+                                    <li>Start application services pointing to <code>${session.targetDataset}</code></li>
+                                    <li>Test that the application is working correctly</li>
+                                    <li>Verify all data is present and correct</li>
+                                </ul>
+                                <p class="mb-0"><strong>Only proceed once you've confirmed the application is running on the target server.</strong></p>
+                            </div>
+                        `;
+                        break;
+
+                    case 'complete':
+                        html += `
+                            <div class="success-box">
+                                <h5><i class="bi bi-check-circle"></i> Migration Complete!</h5>
+                                <p>Your workload has been successfully migrated to <code>${session.targetHost}</code>.</p>
+                                <h6>Next Steps:</h6>
+                                <ul>
+                                    <li>Update DNS/load balancer to point to new server</li>
+                                    <li>Monitor the application for any issues</li>
+                                    <li>Keep this source server available for rollback if needed</li>
+                                    <li>Clean up migration snapshots after confirming success</li>
+                                </ul>
+                            </div>
+                        `;
+                        break;
+                }
+
+                // Add session info
+                html += `
+                    <div class="mt-4">
+                        <h6>Migration Details:</h6>
+                        <div class="row">
+                            <div class="col-md-4"><strong>Source:</strong> ${session.sourceDataset}</div>
+                            <div class="col-md-4"><strong>Target:</strong> ${session.targetHost}:${session.targetDataset}</div>
+                            <div class="col-md-4"><strong>Started:</strong> ${new Date(session.startTime).toLocaleString()}</div>
+                        </div>
+                    </div>
+                `;
+
+                if (session.error) {
+                    html += `
+                        <div class="alert alert-danger mt-3">
+                            <h5><i class="bi bi-exclamation-triangle"></i> Error</h5>
+                            <p>${session.error}</p>
+                        </div>
+                    `;
+                }
+
+                content.innerHTML = html;
+
+                // Update button state
+                const nextBtn = document.getElementById('nextBtn');
+                if (session.status === 'completed') {
+                    nextBtn.style.display = 'none';
+                } else {
+                    nextBtn.style.display = 'inline-block';
+                    nextBtn.textContent = stepInfo.action === 'complete' ? 'Complete Migration' : 'Execute Step';
+                }
+            }
+
+            async executeStep() {
+                try {
+                    const response = await fetch('/api/migration/step', {
+                        method: 'POST'
+                    });
+
+                    const result = await response.json();
+
+                    if (!result.success) {
+                        alert('Step failed: ' + result.error);
+                        return;
+                    }
+
+                    this.currentSession = result.session;
+                    this.refreshStatus();
+                } catch (error) {
+                    alert('Failed to execute step: ' + error.message);
+                }
+            }
+
+            async cancelMigration() {
+                if (confirm('Are you sure you want to cancel the migration?')) {
+                    try {
+                        await fetch('/api/migration/cancel', { method: 'POST' });
+                        this.showStartForm();
+                    } catch (error) {
+                        alert('Failed to cancel migration: ' + error.message);
+                    }
+                }
+            }
+
+            async prepareTarget() {
+                // Get migration details from user input
+                const sourceDataset = prompt('Enter source dataset name (e.g., data/myapp):');
+                const targetDataset = prompt('Enter target dataset name (e.g., data/myapp):');
+                const snapshotName = prompt('Enter initial snapshot name (from source wizard):');
+                
+                if (!sourceDataset || !targetDataset || !snapshotName) {
+                    alert('All fields are required for target preparation');
+                    return;
+                }
+
+                try {
+                    const response = await fetch('/api/migration/target/prepare', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            sourceDataset: sourceDataset,
+                            targetDataset: targetDataset,
+                            snapshotName: snapshotName
+                        })
+                    });
+
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        alert(`Success: ${result.message}\\nRestore Job ID: ${result.restoreJobId || 'N/A'}`);
+                    } else {
+                        alert(`Failed: ${result.error || 'Unknown error'}`);
+                    }
+                } catch (error) {
+                    alert('Failed to prepare target: ' + error.message);
+                }
+            }
+
+            async finalRestore() {
+                // Get migration details from user input
+                const sourceDataset = prompt('Enter source dataset name (e.g., data/myapp):');
+                const targetDataset = prompt('Enter target dataset name (e.g., data/myapp):');
+                const snapshotName = prompt('Enter final snapshot name (from source wizard):');
+                
+                if (!sourceDataset || !targetDataset || !snapshotName) {
+                    alert('All fields are required for final restore');
+                    return;
+                }
+
+                try {
+                    const response = await fetch('/api/migration/target/restore', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            sourceDataset: sourceDataset,
+                            targetDataset: targetDataset,
+                            snapshotName: snapshotName
+                        })
+                    });
+
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        alert(`Success: ${result.message}\\nRestore Job ID: ${result.restoreJobId || 'N/A'}`);
+                    } else {
+                        alert(`Failed: ${result.error || 'Unknown error'}`);
+                    }
+                } catch (error) {
+                    alert('Failed to perform final restore: ' + error.message);
+                }
+            }
+        }
+
+        // Initialize the wizard when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new MigrationWizard();
+        });
+    </script>
+</body>
+</html>
