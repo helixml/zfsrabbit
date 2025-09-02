@@ -3,6 +3,9 @@ package restore
 import (
 	"fmt"
 	"log"
+	"os"
+	"os/exec"
+	"strings"
 	"time"
 
 	"zfsrabbit/internal/transport"
@@ -15,15 +18,18 @@ type RestoreManager struct {
 }
 
 type RestoreJob struct {
-	ID            string
-	SnapshotName  string
-	SourceDataset string
-	TargetDataset string
-	Status        string
-	Progress      int
-	StartTime     time.Time
-	EndTime       *time.Time
-	Error         error
+	ID              string
+	SnapshotName    string
+	SourceDataset   string
+	TargetDataset   string
+	Status          string // starting, verifying, safety_check, awaiting_confirmation, restoring, completed, failed
+	Progress        int
+	StartTime       time.Time
+	EndTime         *time.Time
+	Error           error
+	RequiresConfirm bool   // True if destructive operation needs user confirmation
+	SafetyWarning   string // Warning message about data loss
+	ForceConfirmed  bool   // Set to true by user to proceed with destructive operation
 }
 
 func New(transport *transport.SSHTransport, zfsManager *zfs.Manager) *RestoreManager {
@@ -31,6 +37,34 @@ func New(transport *transport.SSHTransport, zfsManager *zfs.Manager) *RestoreMan
 		transport:  transport,
 		zfsManager: zfsManager,
 	}
+}
+
+// ConfirmDestructiveRestore allows user to confirm and proceed with a destructive restore
+func (r *RestoreManager) ConfirmDestructiveRestore(jobID string) error {
+	job, exists := activeJobs[jobID]
+	if !exists {
+		return fmt.Errorf("restore job %s not found", jobID)
+	}
+	
+	if job.Status != "awaiting_confirmation" {
+		return fmt.Errorf("restore job %s is not awaiting confirmation (status: %s)", jobID, job.Status)
+	}
+	
+	if !job.RequiresConfirm {
+		return fmt.Errorf("restore job %s does not require confirmation", jobID)
+	}
+	
+	log.Printf("User confirmed destructive restore for job %s - proceeding with data loss", jobID)
+	
+	// Set confirmation flag and restart the restore process
+	job.ForceConfirmed = true
+	job.RequiresConfirm = false
+	job.SafetyWarning = ""
+	
+	// Resume the restore process
+	go r.performRestore(job)
+	
+	return nil
 }
 
 func (r *RestoreManager) RestoreSnapshot(snapshotName, targetDataset string) (*RestoreJob, error) {
@@ -70,25 +104,61 @@ func (r *RestoreManager) performRestore(job *RestoreJob) {
 		}
 	}()
 
+	// CRITICAL SAFETY CHECK: Check if target dataset exists and warn about data loss
+	job.Status = "safety_check"
+	job.Progress = 5
+	
+	exists, err := r.checkTargetDatasetExists(job.TargetDataset)
+	if err != nil {
+		r.failJob(job, fmt.Errorf("failed to check target dataset: %w", err))
+		return
+	}
+	
+	if exists {
+		hasUncommittedData, err := r.checkForUncommittedData(job.TargetDataset)
+		if err != nil {
+			r.failJob(job, fmt.Errorf("failed to check for uncommitted data: %w", err))
+			return
+		}
+		
+		if hasUncommittedData && !job.ForceConfirmed {
+			// STOP and require manual confirmation
+			job.RequiresConfirm = true
+			job.Status = "awaiting_confirmation"
+			job.SafetyWarning = fmt.Sprintf("⚠️  DESTRUCTIVE OPERATION WARNING ⚠️\n\n"+
+				"Target dataset '%s' contains data that will be PERMANENTLY LOST.\n"+
+				"ZFS restore will roll back to the snapshot, destroying any changes made after the last snapshot.\n\n"+
+				"🚨 DO NOT proceed if you have active workloads writing to this filesystem!\n\n"+
+				"To proceed:\n"+
+				"1. STOP all applications writing to %s\n"+
+				"2. Manually confirm you want to lose uncommitted data\n"+
+				"3. Click 'Force Restore' to proceed\n\n"+
+				"This action cannot be undone!", job.TargetDataset, job.TargetDataset)
+			
+			log.Printf("Restore job %s requires manual confirmation - target dataset has uncommitted data", job.ID)
+			return // Wait for user confirmation
+		}
+	}
+
 	// Step 1: Verify remote snapshot exists
 	job.Status = "verifying"
 	job.Progress = 10
 
 	var remoteSnapshots []string
-	var err error
+	var remoteErr error
 
 	if job.SourceDataset != "" {
 		// Get snapshots from specific dataset
-		remoteSnapshots, err = r.transport.GetSnapshotsForDataset(job.SourceDataset)
-		if err != nil {
-			r.failJob(job, fmt.Errorf("failed to list snapshots for dataset %s: %w", job.SourceDataset, err))
+		remoteSnapshots, remoteErr = r.transport.GetSnapshotsForDataset(job.SourceDataset)
+		if remoteErr != nil {
+			r.failJob(job, fmt.Errorf("failed to list snapshots for dataset %s: %w", job.SourceDataset, remoteErr))
 			return
 		}
 	} else {
 		// Use default remote dataset
-		remoteSnapshots, err = r.transport.ListRemoteSnapshots()
-		if err != nil {
-			r.failJob(job, fmt.Errorf("failed to list remote snapshots: %w", err))
+		remoteSnapshots, remoteErr = r.transport.ListRemoteSnapshots()
+		if remoteErr != nil {
+			r.failJob(job, fmt.Errorf("failed to list remote snapshots: %w", remoteErr))
 			return
 		}
 	}
@@ -111,9 +181,9 @@ func (r *RestoreManager) performRestore(job *RestoreJob) {
 	job.Progress = 20
 
 	// Check if target dataset already exists
-	exists, err := r.datasetExists(job.TargetDataset)
-	if err != nil {
-		r.failJob(job, fmt.Errorf("failed to check if dataset exists: %w", err))
+	exists, existsErr := r.datasetExists(job.TargetDataset)
+	if existsErr != nil {
+		r.failJob(job, fmt.Errorf("failed to check if dataset exists: %w", existsErr))
 		return
 	}
 
@@ -127,10 +197,22 @@ func (r *RestoreManager) performRestore(job *RestoreJob) {
 	job.Progress = 30
 
 	var restoreErr error
-	if job.SourceDataset != "" {
-		restoreErr = r.transport.RestoreSnapshotFromDataset(job.SourceDataset, job.SnapshotName, job.TargetDataset)
+	if job.ForceConfirmed {
+		// User confirmed destructive operation - use force mode
+		log.Printf("Restore job %s: Using DESTRUCTIVE mode (user confirmed)", job.ID)
+		if job.SourceDataset != "" {
+			restoreErr = r.transport.RestoreSnapshotFromDataset(job.SourceDataset, job.SnapshotName, job.TargetDataset)
+		} else {
+			restoreErr = r.transport.RestoreSnapshot(job.SnapshotName, job.TargetDataset)
+		}
 	} else {
-		restoreErr = r.transport.RestoreSnapshot(job.SnapshotName, job.TargetDataset)
+		// Use safe mode - will fail if conflicts exist
+		log.Printf("Restore job %s: Using SAFE mode (no data loss)", job.ID)
+		if job.SourceDataset != "" {
+			restoreErr = r.transport.RestoreSnapshotFromDatasetSafe(job.SourceDataset, job.SnapshotName, job.TargetDataset)
+		} else {
+			restoreErr = r.transport.RestoreSnapshotSafe(job.SnapshotName, job.TargetDataset)
+		}
 	}
 
 	if restoreErr != nil {
@@ -171,6 +253,136 @@ func (r *RestoreManager) datasetExists(dataset string) (bool, error) {
 		return false, nil
 	}
 	return true, nil
+}
+
+func (r *RestoreManager) checkTargetDatasetExists(dataset string) (bool, error) {
+	snapshots, err := r.zfsManager.ListSnapshots()
+	if err != nil {
+		return false, nil // Assume doesn't exist if we can't check
+	}
+	
+	// Check if any snapshots exist for this dataset
+	for _, snap := range snapshots {
+		if snap.Dataset == dataset {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (r *RestoreManager) checkForUncommittedData(dataset string) (bool, error) {
+	// Method 1: Check if dataset exists at all
+	snapshots, err := r.zfsManager.ListSnapshots()
+	if err != nil {
+		return false, err
+	}
+	
+	var latestSnapshot *zfs.Snapshot
+	for _, snap := range snapshots {
+		if snap.Dataset == dataset {
+			if latestSnapshot == nil || snap.Created.After(latestSnapshot.Created) {
+				latestSnapshot = &snap
+			}
+		}
+	}
+	
+	if latestSnapshot == nil {
+		// Dataset exists but no snapshots = definitely has uncommitted data
+		return true, nil
+	}
+	
+	// Method 2: Use ZFS diff to check for changes since last snapshot
+	hasChanges, err := r.checkZFSDiffSinceSnapshot(dataset, latestSnapshot.Name)
+	if err != nil {
+		log.Printf("Warning: Could not check ZFS diff for %s: %v", dataset, err)
+		// Fall back to conservative approach - assume there might be changes
+		return true, nil
+	}
+	
+	if hasChanges {
+		return true, nil
+	}
+	
+	// Method 3: Check filesystem modification time vs snapshot time
+	hasRecentActivity, err := r.checkFilesystemActivity(dataset, latestSnapshot.Created)
+	if err != nil {
+		log.Printf("Warning: Could not check filesystem activity for %s: %v", dataset, err)
+		// Conservative approach - assume there might be changes
+		return true, nil
+	}
+	
+	return hasRecentActivity, nil
+}
+
+func (r *RestoreManager) checkZFSDiffSinceSnapshot(dataset, snapshotName string) (bool, error) {
+	// Method 1: Use ZFS diff to detect any changes since the snapshot
+	// This is the most reliable method as suggested by the user
+	cmd := exec.Command("zfs", "diff", fmt.Sprintf("%s@%s", dataset, snapshotName))
+	output, err := cmd.Output()
+	
+	if err != nil {
+		log.Printf("ZFS diff failed for %s@%s: %v", dataset, snapshotName, err)
+		// Fall back to Method 2: Check snapshot size vs current usage
+		return r.checkSnapshotSizeDifference(dataset, snapshotName)
+	}
+	
+	// If output is empty, no changes since snapshot
+	diffOutput := strings.TrimSpace(string(output))
+	if diffOutput == "" {
+		return false, nil // No changes detected
+	}
+	
+	log.Printf("ZFS diff detected changes in %s since %s:\n%s", dataset, snapshotName, diffOutput)
+	return true, nil
+}
+
+func (r *RestoreManager) checkSnapshotSizeDifference(dataset, snapshotName string) (bool, error) {
+	// Check if the latest snapshot has non-zero 'used' space
+	// If used > 0, it means there have been writes since that snapshot
+	cmd := exec.Command("zfs", "get", "-H", "-o", "value", "used", fmt.Sprintf("%s@%s", dataset, snapshotName))
+	snapshotOutput, err := cmd.Output()
+	if err != nil {
+		log.Printf("Failed to get snapshot usage: %v", err)
+		return true, nil // Conservative: assume changes exist
+	}
+	
+	snapshotUsage := strings.TrimSpace(string(snapshotOutput))
+	
+	// If snapshot 'used' is non-zero, there have been writes since this snapshot
+	hasChanges := snapshotUsage != "0" && snapshotUsage != "0B"
+	
+	if hasChanges {
+		log.Printf("Snapshot %s@%s has used=%s (writes detected since snapshot)", dataset, snapshotName, snapshotUsage)
+	} else {
+		log.Printf("Snapshot %s@%s has used=0 (no writes since snapshot)", dataset, snapshotName)
+	}
+	
+	return hasChanges, nil
+}
+
+func (r *RestoreManager) checkFilesystemActivity(dataset string, lastSnapshotTime time.Time) (bool, error) {
+	// Get the mountpoint for the dataset
+	cmd := exec.Command("zfs", "get", "-H", "-o", "value", "mountpoint", dataset)
+	output, err := cmd.Output()
+	if err != nil {
+		return true, nil // Conservative: assume there's activity
+	}
+	
+	mountpoint := strings.TrimSpace(string(output))
+	if mountpoint == "-" || mountpoint == "none" {
+		// Dataset not mounted, no filesystem activity possible
+		return false, nil
+	}
+	
+	// Check if mountpoint exists and has been modified since last snapshot
+	fileInfo, err := os.Stat(mountpoint)
+	if err != nil {
+		// Can't stat mountpoint, assume no recent activity
+		return false, nil
+	}
+	
+	// If filesystem was modified after the last snapshot, there might be uncommitted data
+	return fileInfo.ModTime().After(lastSnapshotTime), nil
 }
 
 func (r *RestoreManager) verifyRestore(dataset, snapshotName string) error {

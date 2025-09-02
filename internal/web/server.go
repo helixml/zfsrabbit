@@ -1,11 +1,13 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"zfsrabbit/internal/config"
 	"zfsrabbit/internal/monitor"
@@ -24,6 +26,7 @@ type Server struct {
 	restoreManager *restore.RestoreManager
 	slackHandler   *slack.CommandHandler
 	transport      *transport.SSHTransport
+	httpServer     *http.Server
 }
 
 func NewServer(cfg *config.Config, sched *scheduler.Scheduler, mon *monitor.Monitor, zfsMgr *zfs.Manager, restoreMgr *restore.RestoreManager, transport *transport.SSHTransport) *Server {
@@ -41,21 +44,38 @@ func NewServer(cfg *config.Config, sched *scheduler.Scheduler, mon *monitor.Moni
 }
 
 func (s *Server) Start() error {
-	http.HandleFunc("/", s.basicAuth(s.handleIndex))
-	http.HandleFunc("/api/status", s.basicAuth(s.handleStatus))
-	http.HandleFunc("/api/snapshots", s.basicAuth(s.handleSnapshots))
-	http.HandleFunc("/api/trigger/snapshot", s.basicAuth(s.handleTriggerSnapshot))
-	http.HandleFunc("/api/trigger/scrub", s.basicAuth(s.handleTriggerScrub))
-	http.HandleFunc("/api/restore", s.basicAuth(s.handleRestore))
-	http.HandleFunc("/api/restore/jobs", s.basicAuth(s.handleRestoreJobs))
-	http.HandleFunc("/api/remote/datasets", s.basicAuth(s.handleRemoteDatasets))
-	http.HandleFunc("/api/remote/dataset/", s.basicAuth(s.handleRemoteDatasetInfo))
-	http.HandleFunc("/slack/command", s.slackHandler.HandleSlashCommand)
-	http.HandleFunc("/static/", s.handleStatic)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", s.basicAuth(s.handleIndex))
+	mux.HandleFunc("/api/status", s.basicAuth(s.handleStatus))
+	mux.HandleFunc("/api/snapshots", s.basicAuth(s.handleSnapshots))
+	mux.HandleFunc("/api/trigger/snapshot", s.basicAuth(s.handleTriggerSnapshot))
+	mux.HandleFunc("/api/trigger/scrub", s.basicAuth(s.handleTriggerScrub))
+	mux.HandleFunc("/api/restore", s.basicAuth(s.handleRestore))
+	mux.HandleFunc("/api/restore/jobs", s.basicAuth(s.handleRestoreJobs))
+	mux.HandleFunc("/api/restore/confirm/", s.basicAuth(s.handleRestoreConfirm))
+	mux.HandleFunc("/api/remote/datasets", s.basicAuth(s.handleRemoteDatasets))
+	mux.HandleFunc("/api/remote/dataset/", s.basicAuth(s.handleRemoteDatasetInfo))
+	mux.HandleFunc("/health", s.handleHealth) // Unauthenticated health check
+	mux.HandleFunc("/slack/command", s.slackHandler.HandleSlashCommand)
+	mux.HandleFunc("/static/", s.handleStatic)
 
 	addr := fmt.Sprintf(":%d", s.config.Server.Port)
+	
+	s.httpServer = &http.Server{
+		Addr:    addr,
+		Handler: mux,
+	}
+	
 	log.Printf("Web server starting on %s", addr)
-	return http.ListenAndServe(addr, nil)
+	return s.httpServer.ListenAndServe()
+}
+
+func (s *Server) Shutdown(ctx context.Context) error {
+	if s.httpServer != nil {
+		log.Println("Gracefully shutting down web server")
+		return s.httpServer.Shutdown(ctx)
+	}
+	return nil
 }
 
 func (s *Server) basicAuth(handler http.HandlerFunc) http.HandlerFunc {
@@ -102,6 +122,11 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
         .snapshots-list { max-height: 100px; overflow-y: auto; font-size: 12px; margin-top: 5px; }
         select, input[type="text"] { padding: 8px; margin: 5px; border: 1px solid #ddd; border-radius: 4px; }
         #refreshBtn { position: fixed; top: 20px; right: 20px; }
+        .warning-box { background: #ff6b6b; color: white; padding: 15px; border-radius: 8px; margin: 15px 0; border: 2px solid #e55555; }
+        .warning-box h3 { margin: 0 0 10px 0; font-size: 18px; }
+        .warning-box ul { margin: 10px 0; padding-left: 20px; }
+        .confirmation-box { background: #fff3cd; border: 2px solid #ffc107; padding: 15px; border-radius: 8px; margin: 15px 0; display: none; }
+        .confirmation-box.show { display: block; }
     </style>
 </head>
 <body>
@@ -135,7 +160,20 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
         </div>
 
         <div class="section">
-            <h2>Restore</h2>
+            <h2>⚠️ Restore Operations</h2>
+            
+            <div class="warning-box">
+                <h3>🚨 CRITICAL WARNING: DESTRUCTIVE OPERATION</h3>
+                <p><strong>ZFS restore operations can cause PERMANENT DATA LOSS!</strong></p>
+                <ul>
+                    <li><strong>STOP all applications</strong> writing to the target filesystem</li>
+                    <li><strong>Backup important data</strong> before proceeding</li>
+                    <li>Restore will <strong>roll back to snapshot</strong>, destroying newer changes</li>
+                    <li>This action <strong>cannot be undone</strong></li>
+                </ul>
+                <p><strong>Only proceed if you understand the risks!</strong></p>
+            </div>
+            
             <select id="restoreSourceDataset">
                 <option value="">Select source dataset...</option>
             </select>
@@ -143,7 +181,12 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
                 <option value="">Select snapshot...</option>
             </select>
             <input type="text" id="restoreTargetDataset" placeholder="Target dataset">
-            <button class="button danger" onclick="restore()">Restore</button>
+            <button class="button danger" onclick="restore()">⚠️ Start Restore</button>
+            
+            <div id="restoreJobs">
+                <h3>Active Restore Jobs</h3>
+                <div id="restoreJobsList">Loading...</div>
+            </div>
         </div>
     </div>
 
@@ -503,11 +546,59 @@ func (s *Server) handleRestoreJobs(w http.ResponseWriter, r *http.Request) {
 			jobData["error"] = job.Error.Error()
 		}
 
+		// Add safety warning fields for destructive operations
+		if job.RequiresConfirm {
+			jobData["requires_confirm"] = true
+			jobData["safety_warning"] = job.SafetyWarning
+		}
+
 		response[i] = jobData
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) handleRestoreConfirm(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract job ID from URL path
+	path := strings.TrimPrefix(r.URL.Path, "/api/restore/confirm/")
+	jobID := strings.TrimSpace(path)
+	
+	if jobID == "" {
+		http.Error(w, "Job ID required", http.StatusBadRequest)
+		return
+	}
+
+	err := s.restoreManager.ConfirmDestructiveRestore(jobID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to confirm restore: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	response := map[string]interface{}{
+		"success": true,
+		"message": fmt.Sprintf("Destructive restore confirmed for job %s - proceeding with data loss", jobID),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	// Simple health check endpoint for monitoring systems
+	health := map[string]interface{}{
+		"status":    "healthy",
+		"timestamp": time.Now().Unix(),
+		"service":   "zfsrabbit",
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(health)
 }
 
 func (s *Server) handleRemoteDatasets(w http.ResponseWriter, r *http.Request) {

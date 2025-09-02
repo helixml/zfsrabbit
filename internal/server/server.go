@@ -2,7 +2,10 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"os/exec"
+	"time"
 
 	"zfsrabbit/internal/alert"
 	"zfsrabbit/internal/config"
@@ -28,6 +31,11 @@ type Server struct {
 }
 
 func New(cfg *config.Config) (*Server, error) {
+	// Check system dependencies before starting
+	if err := checkSystemDependencies(); err != nil {
+		return nil, fmt.Errorf("system dependency check failed: %w", err)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	zfsManager := zfs.New(cfg.ZFS.Dataset, cfg.ZFS.SendCompression, cfg.ZFS.Recursive)
@@ -80,9 +88,47 @@ func (s *Server) Start() error {
 func (s *Server) Stop() {
 	log.Println("Stopping ZFSRabbit server")
 
+	// Create context with timeout for graceful shutdown
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+
+	// Stop components in reverse order
 	s.scheduler.Stop()
 	s.monitor.Stop()
+	
+	// Gracefully shutdown web server
+	if err := s.webServer.Shutdown(shutdownCtx); err != nil {
+		log.Printf("Web server shutdown error: %v", err)
+	}
+	
 	s.transport.Close()
-
 	s.cancel()
+}
+
+func checkSystemDependencies() error {
+	requiredCommands := []string{"zfs", "zpool", "mbuffer", "nvme", "smartctl"}
+	
+	for _, cmd := range requiredCommands {
+		if _, err := exec.LookPath(cmd); err != nil {
+			return fmt.Errorf("required command not found: %s (please install %s)", cmd, getInstallHint(cmd))
+		}
+	}
+	
+	log.Printf("All system dependencies verified: %v", requiredCommands)
+	return nil
+}
+
+func getInstallHint(cmd string) string {
+	hints := map[string]string{
+		"zfs":      "zfsutils-linux package",
+		"zpool":    "zfsutils-linux package", 
+		"mbuffer":  "mbuffer package",
+		"nvme":     "nvme-cli package",
+		"smartctl": "smartmontools package",
+	}
+	
+	if hint, exists := hints[cmd]; exists {
+		return hint
+	}
+	return "appropriate package"
 }

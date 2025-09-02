@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
 	"zfsrabbit/internal/validation"
 )
@@ -186,12 +187,26 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	// Schedule validation - basic cron validation
+	// Schedule validation - validate cron expressions
 	if c.Schedule.MonitorInterval < time.Minute {
 		return fmt.Errorf("schedule.monitor_interval must be at least 1 minute")
 	}
+	
+	if err := validateCronExpression(c.Schedule.SnapshotCron); err != nil {
+		return fmt.Errorf("invalid snapshot_cron expression '%s': %w", c.Schedule.SnapshotCron, err)
+	}
+	
+	if err := validateCronExpression(c.Schedule.ScrubCron); err != nil {
+		return fmt.Errorf("invalid scrub_cron expression '%s': %w", c.Schedule.ScrubCron, err)
+	}
 
 	return nil
+}
+
+func validateCronExpression(expr string) error {
+	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+	_, err := parser.Parse(expr)
+	return err
 }
 
 func (c *Config) GetAdminPassword() string {

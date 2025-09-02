@@ -13,7 +13,9 @@
       "Bash(gofmt:*)",
       "Bash(go vet:*)",
       "Bash(staticcheck:*)",
-      "Bash(go install:*)"
+      "Bash(go install:*)",
+      "Bash(find:*)",
+      "Bash(zfs help:*)"
     ],
     "deny": [],
     "ask": []

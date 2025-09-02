@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -79,7 +80,8 @@ func (t *SSHTransport) SendSnapshot(snapshotReader io.Reader, isIncremental bool
 	sanitizedDataset := validation.SanitizeCommand(t.config.RemoteDataset)
 	sanitizedMbufferSize := validation.SanitizeCommand(t.config.MbufferSize)
 	
-	// Build command safely
+	// Build command safely - BACKUP OPERATIONS: Use -F for automation (backup server should be clean)
+	// This prioritizes automation over data safety on backup server (expected behavior)
 	receiveCmd := fmt.Sprintf("mbuffer -s 128k -m %s | zfs receive -F %s",
 		sanitizedMbufferSize, sanitizedDataset)
 
@@ -220,7 +222,19 @@ func (t *SSHTransport) RestoreSnapshot(snapshotName, localDataset string) error 
 	return t.RestoreSnapshotFromDataset(t.config.RemoteDataset, snapshotName, localDataset)
 }
 
+func (t *SSHTransport) RestoreSnapshotSafe(snapshotName, localDataset string) error {
+	return t.RestoreSnapshotFromDatasetSafe(t.config.RemoteDataset, snapshotName, localDataset)
+}
+
 func (t *SSHTransport) RestoreSnapshotFromDataset(remoteDataset, snapshotName, localDataset string) error {
+	return t.restoreSnapshotFromDataset(remoteDataset, snapshotName, localDataset, true) // Force mode
+}
+
+func (t *SSHTransport) RestoreSnapshotFromDatasetSafe(remoteDataset, snapshotName, localDataset string) error {
+	return t.restoreSnapshotFromDataset(remoteDataset, snapshotName, localDataset, false) // Safe mode
+}
+
+func (t *SSHTransport) restoreSnapshotFromDataset(remoteDataset, snapshotName, localDataset string, forceOverwrite bool) error {
 	if t.client == nil {
 		if err := t.Connect(); err != nil {
 			return err
@@ -233,19 +247,24 @@ func (t *SSHTransport) RestoreSnapshotFromDataset(remoteDataset, snapshotName, l
 	}
 	defer session.Close()
 
-	sendCmd := fmt.Sprintf("zfs send %s@%s", remoteDataset, snapshotName)
+	// Determine send flags based on whether we need recursive send
+	sendCmd := fmt.Sprintf("zfs send -R %s@%s", remoteDataset, snapshotName) // Always use -R for full dataset trees
 
 	session.Stdout = &mbufferReceiver{
-		dataset: localDataset,
-		size:    t.config.MbufferSize,
+		dataset:         localDataset,
+		size:            t.config.MbufferSize,
+		forceOverwrite:  forceOverwrite,
+		remoteDataset:   remoteDataset, // Pass source dataset name for proper mapping
 	}
 
 	return session.Run(sendCmd)
 }
 
 type mbufferReceiver struct {
-	dataset string
-	size    string
+	dataset        string
+	size           string
+	forceOverwrite bool   // Use -F flag for destructive operations
+	remoteDataset  string // Source dataset name for proper mapping
 }
 
 func (m *mbufferReceiver) Write(p []byte) (n int, err error) {
@@ -253,8 +272,19 @@ func (m *mbufferReceiver) Write(p []byte) (n int, err error) {
 	sanitizedSize := validation.SanitizeCommand(m.size)
 	sanitizedDataset := validation.SanitizeCommand(m.dataset)
 	
-	// Build command safely - sanitized inputs prevent injection
-	safeCommand := fmt.Sprintf("mbuffer -s 128k -m %s | zfs receive -F %s", sanitizedSize, sanitizedDataset)
+	// Build command safely - choose safe vs. destructive mode with proper dataset mapping
+	var safeCommand string
+	
+	// Use -d flag to strip first element of path (avoids nesting issues)
+	// Example: remote "data1/helix-backup" -> local "data" (strips "data1")
+	receiveFlags := "-d"
+	if m.forceOverwrite {
+		receiveFlags += " -F" // Add force flag for destructive operations
+	}
+	
+	safeCommand = fmt.Sprintf("mbuffer -s 128k -m %s | zfs receive %s %s", 
+		sanitizedSize, receiveFlags, sanitizedDataset)
+	
 	cmd := exec.Command("sh", "-c", safeCommand)
 
 	stdin, err := cmd.StdinPipe()
@@ -278,14 +308,27 @@ func (m *mbufferReceiver) Write(p []byte) (n int, err error) {
 }
 
 func loadPrivateKey(keyPath string) (ssh.Signer, error) {
-	// Validate key path to prevent path traversal
-	if strings.Contains(keyPath, "..") || keyPath == "" {
-		return nil, fmt.Errorf("invalid key path: %s", keyPath)
+	// Enhanced path validation to prevent path traversal attacks
+	if keyPath == "" {
+		return nil, fmt.Errorf("private key path cannot be empty")
+	}
+	
+	// Clean the path to remove any . or .. elements
+	cleanedPath := filepath.Clean(keyPath)
+	
+	// Ensure path is absolute to prevent relative path attacks
+	if !filepath.IsAbs(cleanedPath) {
+		return nil, fmt.Errorf("private key path must be absolute, got: %s", keyPath)
+	}
+	
+	// Additional safety check - still block obvious traversal attempts
+	if strings.Contains(cleanedPath, "..") {
+		return nil, fmt.Errorf("invalid key path contains traversal: %s", keyPath)
 	}
 
-	key, err := os.ReadFile(keyPath)
+	key, err := os.ReadFile(cleanedPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read private key file: %w", err)
+		return nil, fmt.Errorf("failed to read private key file %s: %w", cleanedPath, err)
 	}
 
 	signer, err := ssh.ParsePrivateKey(key)
