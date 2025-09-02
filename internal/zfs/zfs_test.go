@@ -237,7 +237,6 @@ tank/test@snap2	Tue Jan  3 10:30 2023	2.34G	5.67G`,
 
 // Helper methods removed - using Manager methods directly
 
-
 func TestSendSnapshot(t *testing.T) {
 	tests := []struct {
 		name            string

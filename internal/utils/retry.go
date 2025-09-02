@@ -8,8 +8,8 @@ import (
 
 // RetryConfig defines retry behavior
 type RetryConfig struct {
-	MaxAttempts int
-	Delay       time.Duration
+	MaxAttempts   int
+	Delay         time.Duration
 	BackoffFactor float64
 }
 
@@ -46,7 +46,7 @@ func RetryWithContext(ctx context.Context, config RetryConfig, operation func() 
 				return ctx.Err()
 			case <-time.After(delay):
 			}
-			
+
 			// Apply exponential backoff
 			delay = time.Duration(float64(delay) * config.BackoffFactor)
 		}

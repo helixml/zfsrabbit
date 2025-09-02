@@ -60,12 +60,12 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/static/", s.handleStatic)
 
 	addr := fmt.Sprintf(":%d", s.config.Server.Port)
-	
+
 	s.httpServer = &http.Server{
 		Addr:    addr,
 		Handler: mux,
 	}
-	
+
 	log.Printf("Web server starting on %s", addr)
 	return s.httpServer.ListenAndServe()
 }
@@ -568,7 +568,7 @@ func (s *Server) handleRestoreConfirm(w http.ResponseWriter, r *http.Request) {
 	// Extract job ID from URL path
 	path := strings.TrimPrefix(r.URL.Path, "/api/restore/confirm/")
 	jobID := strings.TrimSpace(path)
-	
+
 	if jobID == "" {
 		http.Error(w, "Job ID required", http.StatusBadRequest)
 		return
@@ -596,7 +596,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"timestamp": time.Now().Unix(),
 		"service":   "zfsrabbit",
 	}
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(health)
 }

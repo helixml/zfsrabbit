@@ -44,25 +44,25 @@ func (r *RestoreManager) ConfirmDestructiveRestore(jobID string) error {
 	if !exists {
 		return fmt.Errorf("restore job %s not found", jobID)
 	}
-	
+
 	if job.Status != "awaiting_confirmation" {
 		return fmt.Errorf("restore job %s is not awaiting confirmation (status: %s)", jobID, job.Status)
 	}
-	
+
 	if !job.RequiresConfirm {
 		return fmt.Errorf("restore job %s does not require confirmation", jobID)
 	}
-	
+
 	log.Printf("User confirmed destructive restore for job %s - proceeding with data loss", jobID)
-	
+
 	// Set confirmation flag and restart the restore process
 	job.ForceConfirmed = true
 	job.RequiresConfirm = false
 	job.SafetyWarning = ""
-	
+
 	// Resume the restore process
 	go r.performRestore(job)
-	
+
 	return nil
 }
 
@@ -106,20 +106,20 @@ func (r *RestoreManager) performRestore(job *RestoreJob) {
 	// CRITICAL SAFETY CHECK: Check if target dataset exists and warn about data loss
 	job.Status = "safety_check"
 	job.Progress = 5
-	
+
 	exists, err := r.checkTargetDatasetExists(job.TargetDataset)
 	if err != nil {
 		r.failJob(job, fmt.Errorf("failed to check target dataset: %w", err))
 		return
 	}
-	
+
 	if exists {
 		hasUncommittedData, err := r.checkForUncommittedData(job.TargetDataset)
 		if err != nil {
 			r.failJob(job, fmt.Errorf("failed to check for uncommitted data: %w", err))
 			return
 		}
-		
+
 		if hasUncommittedData && !job.ForceConfirmed {
 			// STOP and require manual confirmation
 			job.RequiresConfirm = true
@@ -133,7 +133,7 @@ func (r *RestoreManager) performRestore(job *RestoreJob) {
 				"2. Manually confirm you want to lose uncommitted data\n"+
 				"3. Click 'Force Restore' to proceed\n\n"+
 				"This action cannot be undone!", job.TargetDataset, job.TargetDataset)
-			
+
 			log.Printf("Restore job %s requires manual confirmation - target dataset has uncommitted data", job.ID)
 			return // Wait for user confirmation
 		}
@@ -259,7 +259,7 @@ func (r *RestoreManager) checkTargetDatasetExists(dataset string) (bool, error) 
 	if err != nil {
 		return false, nil // Assume doesn't exist if we can't check
 	}
-	
+
 	// Check if any snapshots exist for this dataset
 	for _, snap := range snapshots {
 		if snap.Dataset == dataset {
@@ -275,7 +275,7 @@ func (r *RestoreManager) checkForUncommittedData(dataset string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	
+
 	var latestSnapshot *zfs.Snapshot
 	for _, snap := range snapshots {
 		if snap.Dataset == dataset {
@@ -284,18 +284,18 @@ func (r *RestoreManager) checkForUncommittedData(dataset string) (bool, error) {
 			}
 		}
 	}
-	
+
 	if latestSnapshot == nil {
 		// Dataset exists but no snapshots = definitely has uncommitted data
 		return true, nil
 	}
-	
+
 	// Use ZFS diff - the ONE reliable way to check for changes since snapshot
 	hasChanges, err := r.checkZFSDiffSinceSnapshot(dataset, latestSnapshot.Name)
 	if err != nil {
 		return false, fmt.Errorf("failed to check for uncommitted data using zfs diff: %w", err)
 	}
-	
+
 	return hasChanges, nil
 }
 
@@ -303,21 +303,20 @@ func (r *RestoreManager) checkZFSDiffSinceSnapshot(dataset, snapshotName string)
 	// Use ZFS diff - the ONE way to detect changes since snapshot
 	cmd := exec.Command("zfs", "diff", fmt.Sprintf("%s@%s", dataset, snapshotName))
 	output, err := cmd.Output()
-	
+
 	if err != nil {
 		return false, fmt.Errorf("zfs diff command failed for %s@%s: %w", dataset, snapshotName, err)
 	}
-	
+
 	// If output is empty, no changes since snapshot
 	diffOutput := strings.TrimSpace(string(output))
 	if diffOutput == "" {
 		return false, nil // No changes detected
 	}
-	
+
 	log.Printf("ZFS diff detected changes in %s since %s:\n%s", dataset, snapshotName, diffOutput)
 	return true, nil
 }
-
 
 func (r *RestoreManager) verifyRestore(dataset, snapshotName string) error {
 	// Check if the restored dataset exists

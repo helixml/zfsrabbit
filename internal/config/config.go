@@ -191,11 +191,11 @@ func (c *Config) Validate() error {
 	if c.Schedule.MonitorInterval < time.Minute {
 		return fmt.Errorf("schedule.monitor_interval must be at least 1 minute")
 	}
-	
+
 	if err := validateCronExpression(c.Schedule.SnapshotCron); err != nil {
 		return fmt.Errorf("invalid snapshot_cron expression '%s': %w", c.Schedule.SnapshotCron, err)
 	}
-	
+
 	if err := validateCronExpression(c.Schedule.ScrubCron); err != nil {
 		return fmt.Errorf("invalid scrub_cron expression '%s': %w", c.Schedule.ScrubCron, err)
 	}
