@@ -6,7 +6,10 @@
       "Bash(go build:*)",
       "Bash(go test:*)",
       "Bash(chmod:*)",
-      "Bash(make test-unit:*)"
+      "Bash(make test-unit:*)",
+      "WebSearch",
+      "WebFetch(domain:api.slack.com)",
+      "WebFetch(domain:docs.slack.dev)"
     ],
     "deny": [],
     "ask": []

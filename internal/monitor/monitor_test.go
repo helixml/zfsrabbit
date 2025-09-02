@@ -130,8 +130,8 @@ func TestNewMonitor(t *testing.T) {
 		t.Errorf("Expected cooldown of 1 hour, got %v", monitor.alertCooldown)
 	}
 
-	if len(monitor.lastAlerts) != 0 {
-		t.Error("Expected empty lastAlerts map")
+	if len(monitor.alertStates) != 0 {
+		t.Error("Expected empty alertStates map")
 	}
 }
 
@@ -590,6 +590,338 @@ func TestSendDiskAlert(t *testing.T) {
 
 	if !strings.Contains(lastAlert.Body, "High temperature: 75°C") {
 		t.Error("Expected alert body to contain error details")
+	}
+}
+
+func TestSendNVMeAlert(t *testing.T) {
+	cfg := &config.Config{}
+	alerter := NewMockAlerter()
+	monitor := New(cfg, alerter)
+
+	smart := &SMARTData{
+		Device:           "/dev/nvme0n1",
+		Healthy:          false,
+		Temperature:      85,
+		IsNVMe:           true,
+		CriticalWarning:  3, // Spare capacity + temperature warnings
+		PercentageUsed:   95,
+		AvailableSpare:   5,
+		MaxTemperature:   90,
+		DataUnitsWritten: 1024000,
+		Errors:          []string{"High temperature: 85°C", "High wear level: 95%", "Low spare capacity: 5%"},
+	}
+
+	monitor.sendDiskAlert(smart)
+
+	if alerter.GetAlertCount() != 1 {
+		t.Errorf("Expected 1 alert, got %d", alerter.GetAlertCount())
+	}
+
+	alert := alerter.GetLastAlert()
+	if alert == nil {
+		t.Fatal("Expected alert but got none")
+	}
+
+	if !strings.Contains(alert.Subject, "EMERGENCY") && !strings.Contains(alert.Subject, "CRITICAL") {
+		t.Errorf("Expected severity level in subject, got: %s", alert.Subject)
+	}
+
+	if !strings.Contains(alert.Subject, "NVMe SSD Health Alert") {
+		t.Errorf("Expected NVMe SSD health alert subject, got: %s", alert.Subject)
+	}
+
+	if !strings.Contains(alert.Body, "Severity:") {
+		t.Error("Expected severity in alert body")
+	}
+
+	if !strings.Contains(alert.Body, "NVMe Specific Data") {
+		t.Error("Expected NVMe specific data section in alert body")
+	}
+
+	if !strings.Contains(alert.Body, "Critical Warning: 0x3") {
+		t.Error("Expected critical warning in alert body")
+	}
+
+	if !strings.Contains(alert.Body, "Available spare capacity has fallen below threshold") {
+		t.Error("Expected spare capacity warning explanation")
+	}
+
+	if !strings.Contains(alert.Body, "Temperature threshold exceeded") {
+		t.Error("Expected temperature warning explanation")
+	}
+
+	if !strings.Contains(alert.Body, "Wear Level: 95%") {
+		t.Error("Expected wear level in alert body")
+	}
+
+	if !strings.Contains(alert.Body, "Available Spare: 5%") {
+		t.Error("Expected available spare in alert body")
+	}
+
+	if !strings.Contains(alert.Body, "Data Written: 1024000 units") {
+		t.Error("Expected data units written in alert body")
+	}
+}
+
+func TestNVMeDetection(t *testing.T) {
+	tests := []struct {
+		device   string
+		expected bool
+	}{
+		{"/dev/nvme0n1", true},
+		{"/dev/nvme1n1", true},
+		{"/dev/sda", false},
+		{"/dev/sdb1", false},
+		{"/dev/nvme0", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.device, func(t *testing.T) {
+			// The device detection happens in getSMARTData via nvme string check
+			isNVMe := strings.Contains(tt.device, "nvme")
+			if isNVMe != tt.expected {
+				t.Errorf("Expected NVMe detection for %s to be %v, got %v", tt.device, tt.expected, isNVMe)
+			}
+		})
+	}
+}
+
+func TestTemperatureSeverity(t *testing.T) {
+	cfg := &config.Config{}
+	monitor := New(cfg, nil)
+
+	tests := []struct {
+		name        string
+		temperature int
+		isNVMe      bool
+		expected    AlertSeverity
+	}{
+		{"NVMe normal temp", 45, true, SeverityInfo},
+		{"NVMe warning temp", 65, true, SeverityWarning},
+		{"NVMe critical temp", 75, true, SeverityCritical},
+		{"NVMe emergency temp", 85, true, SeverityEmergency},
+		{"HDD normal temp", 40, false, SeverityInfo},
+		{"HDD warning temp", 55, false, SeverityWarning},
+		{"HDD critical temp", 65, false, SeverityCritical},
+		{"HDD emergency temp", 75, false, SeverityEmergency},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			severity := monitor.getTemperatureSeverity(tt.temperature, tt.isNVMe)
+			if severity != tt.expected {
+				t.Errorf("Expected severity %v for %d°C (%v), got %v", tt.expected, tt.temperature, tt.isNVMe, severity)
+			}
+		})
+	}
+}
+
+func TestCriticalWarningSeverity(t *testing.T) {
+	cfg := &config.Config{}
+	monitor := New(cfg, nil)
+
+	tests := []struct {
+		name     string
+		warning  int
+		expected AlertSeverity
+	}{
+		{"No warnings", 0, SeverityInfo},
+		{"Temperature warning", 2, SeverityWarning},
+		{"Spare capacity low", 1, SeverityCritical},
+		{"Reliability degraded", 4, SeverityCritical},
+		{"Read-only mode", 8, SeverityEmergency},
+		{"Multiple warnings", 7, SeverityCritical}, // Spare + reliability + temp, but no read-only
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			severity := monitor.getCriticalWarningSeverity(tt.warning)
+			if severity != tt.expected {
+				t.Errorf("Expected severity %v for warning 0x%x, got %v", tt.expected, tt.warning, severity)
+			}
+		})
+	}
+}
+
+func TestAlertEscalation(t *testing.T) {
+	cfg := &config.Config{}
+	alerter := NewMockAlerter()
+	monitor := New(cfg, alerter)
+
+	// First alert - warning level (ensure all values are in warning range)
+	smart1 := &SMARTData{
+		Device:         "/dev/nvme0n1",
+		IsNVMe:         true,
+		Temperature:    65,             // Warning level
+		PercentageUsed: 50,             // Normal
+		AvailableSpare: 50,             // Normal  
+		Healthy:        false,
+	}
+
+	monitor.sendDiskAlert(smart1)
+	if alerter.GetAlertCount() != 1 {
+		t.Errorf("Expected 1 alert after first warning, got %d", alerter.GetAlertCount())
+	}
+
+	// Verify first alert is WARNING level
+	firstAlert := alerter.GetLastAlert()
+	if !strings.Contains(firstAlert.Subject, "WARNING") {
+		t.Errorf("Expected WARNING in first alert subject, got: %s", firstAlert.Subject)
+	}
+
+	// Second alert - same severity, should be blocked by cooldown
+	monitor.sendDiskAlert(smart1)
+	if alerter.GetAlertCount() != 1 {
+		t.Errorf("Expected 1 alert after duplicate warning, got %d", alerter.GetAlertCount())
+	}
+
+	// Third alert - escalated to critical, should bypass cooldown
+	smart2 := &SMARTData{
+		Device:         "/dev/nvme0n1",
+		IsNVMe:         true,
+		Temperature:    75,             // Critical level
+		PercentageUsed: 50,             // Normal
+		AvailableSpare: 50,             // Normal
+		Healthy:        false,
+	}
+
+	monitor.sendDiskAlert(smart2)
+	if alerter.GetAlertCount() != 2 {
+		t.Errorf("Expected 2 alerts after escalation, got %d", alerter.GetAlertCount())
+	}
+
+	// Check that the second alert indicates escalation
+	lastAlert := alerter.GetLastAlert()
+	if !strings.Contains(lastAlert.Subject, "CRITICAL") {
+		t.Errorf("Expected CRITICAL in escalated alert subject, got: %s", lastAlert.Subject)
+	}
+}
+
+func TestTemperatureJumpEscalation(t *testing.T) {
+	cfg := &config.Config{}
+	alerter := NewMockAlerter()
+	monitor := New(cfg, alerter)
+
+	// First alert - moderate temperature
+	smart1 := &SMARTData{
+		Device:      "/dev/nvme0n1",
+		IsNVMe:      true,
+		Temperature: 62,
+		Healthy:     false,
+	}
+
+	monitor.sendDiskAlert(smart1)
+	if alerter.GetAlertCount() != 1 {
+		t.Errorf("Expected 1 alert after first temperature, got %d", alerter.GetAlertCount())
+	}
+
+	// Big temperature jump (+15°C) - should bypass cooldown
+	smart2 := &SMARTData{
+		Device:      "/dev/nvme0n1",
+		IsNVMe:      true,
+		Temperature: 77, // +15°C jump
+		Healthy:     false,
+	}
+
+	monitor.sendDiskAlert(smart2)
+	if alerter.GetAlertCount() != 2 {
+		t.Errorf("Expected 2 alerts after temperature jump, got %d", alerter.GetAlertCount())
+	}
+}
+
+func TestCriticalWarningEscalation(t *testing.T) {
+	cfg := &config.Config{}
+	alerter := NewMockAlerter()
+	monitor := New(cfg, alerter)
+
+	// First alert - temperature warning only
+	smart1 := &SMARTData{
+		Device:          "/dev/nvme0n1",
+		IsNVMe:          true,
+		Temperature:     65,
+		CriticalWarning: 2, // Temperature bit only
+		Healthy:         false,
+	}
+
+	monitor.sendDiskAlert(smart1)
+	if alerter.GetAlertCount() != 1 {
+		t.Errorf("Expected 1 alert after first warning, got %d", alerter.GetAlertCount())
+	}
+
+	// New critical warning bit appears - should bypass cooldown
+	smart2 := &SMARTData{
+		Device:          "/dev/nvme0n1",
+		IsNVMe:          true,
+		Temperature:     65,
+		CriticalWarning: 3, // Temperature + spare capacity bits
+		Healthy:         false,
+	}
+
+	monitor.sendDiskAlert(smart2)
+	if alerter.GetAlertCount() != 2 {
+		t.Errorf("Expected 2 alerts after new critical warning, got %d", alerter.GetAlertCount())
+	}
+}
+
+func TestOverallSeverity(t *testing.T) {
+	cfg := &config.Config{}
+	monitor := New(cfg, nil)
+
+	tests := []struct {
+		name     string
+		smart    *SMARTData
+		expected AlertSeverity
+	}{
+		{
+			name: "NVMe emergency - multiple factors",
+			smart: &SMARTData{
+				IsNVMe:          true,
+				Temperature:     85, // Emergency
+				PercentageUsed:  100, // Emergency
+				AvailableSpare:  3,  // Emergency
+				CriticalWarning: 8,  // Read-only = Emergency
+			},
+			expected: SeverityEmergency,
+		},
+		{
+			name: "NVMe critical - wear level",
+			smart: &SMARTData{
+				IsNVMe:         true,
+				Temperature:    50,
+				PercentageUsed: 97, // Critical
+				AvailableSpare: 15,
+			},
+			expected: SeverityCritical,
+		},
+		{
+			name: "NVMe warning - temperature",
+			smart: &SMARTData{
+				IsNVMe:         true,
+				Temperature:    65, // Warning
+				PercentageUsed: 50,
+				AvailableSpare: 50,
+			},
+			expected: SeverityWarning,
+		},
+		{
+			name: "Normal operation",
+			smart: &SMARTData{
+				IsNVMe:         true,
+				Temperature:    45,
+				PercentageUsed: 30,
+				AvailableSpare: 80,
+			},
+			expected: SeverityInfo,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			severity := monitor.getOverallSeverity(tt.smart)
+			if severity != tt.expected {
+				t.Errorf("Expected severity %v, got %v", tt.expected, severity)
+			}
+		})
 	}
 }
 

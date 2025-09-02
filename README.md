@@ -34,7 +34,8 @@ A comprehensive ZFS backup solution written in Go that provides automated snapsh
 ## Requirements
 
 - Linux system with ZFS utilities installed
-- `smartctl` for disk monitoring
+- `smartctl` for disk monitoring (traditional drives)
+- `nvme-cli` for NVMe SSD monitoring (recommended for NVMe drives)
 - `mbuffer` for efficient data transfer
 - SSH access to remote backup server
 - Go 1.24+ for building
@@ -136,6 +137,41 @@ slack:
   slash_token: "your-slack-slash-command-token"
 ```
 
+#### Setting Up Slack Integration
+
+**1. Create a Slack App:**
+- Go to https://api.slack.com/apps
+- Click "Create New App" → "From scratch"
+- Name your app (e.g., "ZFSRabbit") and select your workspace
+
+**2. Set up Incoming Webhooks (for alerts):**
+- In your app settings, go to "Incoming Webhooks"
+- Toggle "Activate Incoming Webhooks" to On
+- Click "Add New Webhook to Workspace"
+- Select the channel where you want alerts (e.g., #zfsrabbit)
+- Copy the webhook URL (looks like `https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX`)
+- Add this URL to your config as `webhook_url`
+
+**3. Create a Slash Command (for interactive commands):**
+- In your app settings, go to "Slash Commands"
+- Click "Create New Command"
+- **Command**: `/zfsrabbit` (or your preferred command name)
+- **Request URL**: `http://your-server:8080/slack/command` (replace with your actual server)
+- **Short Description**: "ZFS backup system controls"
+- **Usage Hint**: `status | snapshot | scrub | jobs | remote | help`
+- Click "Save"
+
+**4. Get the Verification Token:**
+- In your app settings, go to "Basic Information"
+- Under "App Credentials", copy the "Verification Token" 
+- Add this token to your config as `slash_token`
+- **Note**: Verification tokens are deprecated by Slack. For production use, consider implementing signed secrets for better security
+
+**5. Install the App:**
+- In your app settings, go to "Install App"
+- Click "Install to Workspace"
+- Authorize the app for your workspace
+
 ### Scheduling
 ```yaml
 schedule:
@@ -165,7 +201,7 @@ The web interface provides:
 
 ### Slack Commands
 
-Set up a slash command in Slack (e.g., `/zfsrabbit`) pointing to `http://your-server:8080/slack/command`
+After completing the Slack setup above, you can use these commands:
 
 Available commands:
 - `/zfsrabbit status` - Show overall system health
@@ -210,15 +246,17 @@ sudo journalctl -u zfsrabbit -f
 
 ZFSRabbit monitors:
 - ZFS pool status and errors
-- SMART disk health data
-- Disk temperatures
-- Reallocated sectors
-- Pending/offline sectors
+- SMART disk health data (traditional HDDs/SATA SSDs)
+- **NVMe SSD monitoring** (temperature, wear level, critical warnings, spare capacity)
+- Disk temperatures with configurable thresholds
+- Reallocated sectors and pending/offline sectors
 
 Email alerts are sent when:
 - ZFS pools become degraded
 - Disk SMART health checks fail
-- High disk temperatures detected
+- High disk temperatures detected (>60°C configurable)
+- **NVMe critical warnings** (spare capacity, temperature, reliability issues)
+- **NVMe wear level exceeds 90%** (proactive replacement alerts)
 - Disk errors found
 
 Slack alerts include:

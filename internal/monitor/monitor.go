@@ -14,12 +14,43 @@ import (
 	"zfsrabbit/internal/zfs"
 )
 
+type AlertSeverity int
+
+const (
+	SeverityInfo AlertSeverity = iota
+	SeverityWarning
+	SeverityCritical
+	SeverityEmergency
+)
+
+func (s AlertSeverity) String() string {
+	switch s {
+	case SeverityInfo:
+		return "INFO"
+	case SeverityWarning:
+		return "WARNING"
+	case SeverityCritical:
+		return "CRITICAL"
+	case SeverityEmergency:
+		return "EMERGENCY"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+type AlertState struct {
+	LastAlertTime     time.Time
+	LastSeverity      AlertSeverity
+	LastTemperature   int
+	LastCriticalWarning int
+}
+
 type Monitor struct {
 	config       *config.Config
 	alerter      Alerter
 	ctx          context.Context
 	cancel       context.CancelFunc
-	lastAlerts   map[string]time.Time
+	alertStates  map[string]*AlertState // Per-device alert state
 	alertCooldown time.Duration
 }
 
@@ -63,6 +94,13 @@ type SMARTData struct {
 	Healthy     bool
 	Temperature int
 	Errors      []string
+	// NVMe-specific fields
+	IsNVMe           bool
+	CriticalWarning  int    // NVMe critical warning bits
+	PercentageUsed   int    // Wear level (0-100%+)
+	AvailableSpare   int    // Spare capacity remaining
+	MaxTemperature   int    // Lifetime max temperature
+	DataUnitsWritten uint64 // Total data written (for wear tracking)
 }
 
 func New(cfg *config.Config, alerter Alerter) *Monitor {
@@ -73,7 +111,7 @@ func New(cfg *config.Config, alerter Alerter) *Monitor {
 		alerter:       alerter,
 		ctx:           ctx,
 		cancel:        cancel,
-		lastAlerts:    make(map[string]time.Time),
+		alertStates:   make(map[string]*AlertState),
 		alertCooldown: 1 * time.Hour,
 	}
 }
@@ -217,15 +255,21 @@ func (m *Monitor) getSystemDisks() ([]string, error) {
 }
 
 func (m *Monitor) getSMARTData(device string) (*SMARTData, error) {
+	smart := &SMARTData{
+		Device:  device,
+		Healthy: true,
+	}
+	
+	// Check if this is an NVMe device
+	if strings.Contains(device, "nvme") {
+		return m.getNVMeSMARTData(device, smart)
+	}
+	
+	// Traditional SMART data for HDDs/SATA SSDs
 	cmd := exec.Command("smartctl", "-H", "-A", device)
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, err
-	}
-	
-	smart := &SMARTData{
-		Device:  device,
-		Healthy: true,
 	}
 	
 	lines := strings.Split(string(output), "\n")
@@ -266,9 +310,177 @@ func (m *Monitor) getSMARTData(device string) (*SMARTData, error) {
 	return smart, nil
 }
 
+func (m *Monitor) getNVMeSMARTData(device string, smart *SMARTData) (*SMARTData, error) {
+	smart.IsNVMe = true
+	
+	// Try nvme-cli first for better NVMe support
+	if err := m.parseNVMeCLI(device, smart); err == nil {
+		return smart, nil
+	}
+	
+	// Fallback to smartctl for NVMe
+	return m.parseSmartctlNVMe(device, smart)
+}
+
+func (m *Monitor) parseNVMeCLI(device string, smart *SMARTData) error {
+	cmd := exec.Command("nvme", "smart-log", device)
+	output, err := cmd.Output()
+	if err != nil {
+		return err
+	}
+	
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		
+		// Parse critical warning
+		if strings.Contains(line, "critical_warning") {
+			fields := strings.Fields(line)
+			if len(fields) >= 3 {
+				if warning, err := strconv.Atoi(fields[2]); err == nil {
+					smart.CriticalWarning = warning
+					if warning > 0 {
+						smart.Healthy = false
+						smart.Errors = append(smart.Errors, fmt.Sprintf("Critical warning: 0x%x", warning))
+					}
+				}
+			}
+		}
+		
+		// Parse temperature
+		if strings.Contains(line, "temperature") && strings.Contains(line, "Celsius") {
+			fields := strings.Fields(line)
+			for _, field := range fields {
+				if temp, err := strconv.Atoi(field); err == nil && temp > 0 && temp < 200 {
+					smart.Temperature = temp
+					if temp > 60 {
+						smart.Errors = append(smart.Errors, fmt.Sprintf("High temperature: %d°C", temp))
+					}
+					break
+				}
+			}
+		}
+		
+		// Parse percentage used (wear level)
+		if strings.Contains(line, "percentage_used") {
+			fields := strings.Fields(line)
+			if len(fields) >= 3 {
+				if used, err := strconv.Atoi(strings.TrimSuffix(fields[2], "%")); err == nil {
+					smart.PercentageUsed = used
+					if used > 90 {
+						smart.Errors = append(smart.Errors, fmt.Sprintf("High wear level: %d%%", used))
+					}
+				}
+			}
+		}
+		
+		// Parse available spare
+		if strings.Contains(line, "available_spare") {
+			fields := strings.Fields(line)
+			if len(fields) >= 3 {
+				if spare, err := strconv.Atoi(strings.TrimSuffix(fields[2], "%")); err == nil {
+					smart.AvailableSpare = spare
+					if spare < 10 {
+						smart.Healthy = false
+						smart.Errors = append(smart.Errors, fmt.Sprintf("Low spare capacity: %d%%", spare))
+					}
+				}
+			}
+		}
+		
+		// Parse data units written
+		if strings.Contains(line, "data_units_written") {
+			fields := strings.Fields(line)
+			if len(fields) >= 3 {
+				if written, err := strconv.ParseUint(strings.Replace(fields[2], ",", "", -1), 10, 64); err == nil {
+					smart.DataUnitsWritten = written
+				}
+			}
+		}
+	}
+	
+	return nil
+}
+
+func (m *Monitor) parseSmartctlNVMe(device string, smart *SMARTData) (*SMARTData, error) {
+	cmd := exec.Command("smartctl", "-H", "-A", device)
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		
+		if strings.Contains(line, "SMART overall-health") {
+			if !strings.Contains(line, "PASSED") {
+				smart.Healthy = false
+				smart.Errors = append(smart.Errors, "SMART health check failed")
+			}
+		}
+		
+		// Parse NVMe-specific attributes from smartctl
+		if strings.Contains(line, "Critical Warning:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 3 {
+				if warning, err := strconv.Atoi(strings.TrimPrefix(fields[2], "0x")); err == nil {
+					smart.CriticalWarning = warning
+					if warning > 0 {
+						smart.Healthy = false
+						smart.Errors = append(smart.Errors, fmt.Sprintf("Critical warning: 0x%x", warning))
+					}
+				}
+			}
+		}
+		
+		if strings.Contains(line, "Temperature:") {
+			fields := strings.Fields(line)
+			for _, field := range fields {
+				if temp, err := strconv.Atoi(field); err == nil && temp > 0 && temp < 200 {
+					smart.Temperature = temp
+					if temp > 60 {
+						smart.Errors = append(smart.Errors, fmt.Sprintf("High temperature: %d°C", temp))
+					}
+					break
+				}
+			}
+		}
+		
+		if strings.Contains(line, "Percentage Used:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 3 {
+				if used, err := strconv.Atoi(strings.TrimSuffix(fields[2], "%")); err == nil {
+					smart.PercentageUsed = used
+					if used > 90 {
+						smart.Errors = append(smart.Errors, fmt.Sprintf("High wear level: %d%%", used))
+					}
+				}
+			}
+		}
+		
+		if strings.Contains(line, "Available Spare:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 3 {
+				if spare, err := strconv.Atoi(strings.TrimSuffix(fields[2], "%")); err == nil {
+					smart.AvailableSpare = spare
+					if spare < 10 {
+						smart.Healthy = false
+						smart.Errors = append(smart.Errors, fmt.Sprintf("Low spare capacity: %d%%", spare))
+					}
+				}
+			}
+		}
+	}
+	
+	return smart, nil
+}
+
 func (m *Monitor) sendPoolAlert(health *PoolHealth) {
 	alertKey := fmt.Sprintf("pool_%s", health.Pool)
-	if time.Since(m.lastAlerts[alertKey]) < m.alertCooldown {
+	currentState, exists := m.alertStates[alertKey]
+	
+	if exists && time.Since(currentState.LastAlertTime) < m.alertCooldown {
 		return
 	}
 	
@@ -301,28 +513,240 @@ Device Status:
 	if err := m.alerter.SendAlert(subject, body); err != nil {
 		log.Printf("Failed to send pool alert: %v", err)
 	} else {
-		m.lastAlerts[alertKey] = time.Now()
+		// Update or create alert state for this pool
+		if !exists {
+			m.alertStates[alertKey] = &AlertState{
+				LastAlertTime: time.Now(),
+			}
+		} else {
+			currentState.LastAlertTime = time.Now()
+		}
 		log.Printf("Sent pool health alert for %s", health.Pool)
 	}
 }
 
+func (m *Monitor) getTemperatureSeverity(temperature int, isNVMe bool) AlertSeverity {
+	if isNVMe {
+		// NVMe drives have different temperature tolerances
+		switch {
+		case temperature >= 80:
+			return SeverityEmergency // Immediate action required
+		case temperature >= 70:
+			return SeverityCritical // Very concerning
+		case temperature >= 60:
+			return SeverityWarning // Watch closely
+		default:
+			return SeverityInfo
+		}
+	} else {
+		// Traditional HDD/SATA SSD thresholds
+		switch {
+		case temperature >= 70:
+			return SeverityEmergency
+		case temperature >= 60:
+			return SeverityCritical
+		case temperature >= 50:
+			return SeverityWarning
+		default:
+			return SeverityInfo
+		}
+	}
+}
+
+func (m *Monitor) getCriticalWarningSeverity(warning int) AlertSeverity {
+	maxSeverity := SeverityInfo
+	
+	if warning&8 != 0 { // Media read-only
+		maxSeverity = SeverityEmergency
+	} else if warning&4 != 0 { // Reliability degraded
+		if SeverityCritical > maxSeverity {
+			maxSeverity = SeverityCritical
+		}
+	}
+	
+	if warning&1 != 0 { // Spare capacity low
+		if SeverityCritical > maxSeverity {
+			maxSeverity = SeverityCritical
+		}
+	}
+	
+	if warning&2 != 0 { // Temperature threshold
+		if SeverityWarning > maxSeverity {
+			maxSeverity = SeverityWarning
+		}
+	}
+	
+	return maxSeverity
+}
+
+func (m *Monitor) getOverallSeverity(smart *SMARTData) AlertSeverity {
+	maxSeverity := SeverityInfo
+	
+	// Check temperature severity
+	tempSeverity := m.getTemperatureSeverity(smart.Temperature, smart.IsNVMe)
+	if tempSeverity > maxSeverity {
+		maxSeverity = tempSeverity
+	}
+	
+	// Check NVMe critical warning severity
+	if smart.IsNVMe && smart.CriticalWarning > 0 {
+		warningSeverity := m.getCriticalWarningSeverity(smart.CriticalWarning)
+		if warningSeverity > maxSeverity {
+			maxSeverity = warningSeverity
+		}
+	}
+	
+	// Check wear level for NVMe
+	if smart.IsNVMe {
+		switch {
+		case smart.PercentageUsed >= 100:
+			if SeverityEmergency > maxSeverity {
+				maxSeverity = SeverityEmergency
+			}
+		case smart.PercentageUsed >= 95:
+			if SeverityCritical > maxSeverity {
+				maxSeverity = SeverityCritical
+			}
+		case smart.PercentageUsed >= 90:
+			if SeverityWarning > maxSeverity {
+				maxSeverity = SeverityWarning
+			}
+		}
+	}
+	
+	// Check available spare for NVMe
+	if smart.IsNVMe {
+		switch {
+		case smart.AvailableSpare <= 5:
+			if SeverityEmergency > maxSeverity {
+				maxSeverity = SeverityEmergency
+			}
+		case smart.AvailableSpare <= 10:
+			if SeverityCritical > maxSeverity {
+				maxSeverity = SeverityCritical
+			}
+		case smart.AvailableSpare <= 20:
+			if SeverityWarning > maxSeverity {
+				maxSeverity = SeverityWarning
+			}
+		}
+	}
+	
+	return maxSeverity
+}
+
+func (m *Monitor) shouldSendAlert(smart *SMARTData, severity AlertSeverity) bool {
+	alertKey := smart.Device
+	currentState, exists := m.alertStates[alertKey]
+	
+	if !exists {
+		// First alert for this device
+		m.alertStates[alertKey] = &AlertState{
+			LastAlertTime:       time.Now(),
+			LastSeverity:        severity,
+			LastTemperature:     smart.Temperature,
+			LastCriticalWarning: smart.CriticalWarning,
+		}
+		return severity > SeverityInfo
+	}
+	
+	// Check for escalation conditions
+	escalated := false
+	
+	// Severity increased
+	if severity > currentState.LastSeverity {
+		escalated = true
+	}
+	
+	// Significant temperature increase (>10°C)
+	if smart.Temperature > currentState.LastTemperature+10 {
+		escalated = true
+	}
+	
+	// New critical warning bits
+	if smart.IsNVMe {
+		newWarnings := smart.CriticalWarning & ^currentState.LastCriticalWarning
+		if newWarnings > 0 {
+			escalated = true
+		}
+	}
+	
+	// If escalated, bypass cooldown
+	if escalated {
+		currentState.LastAlertTime = time.Now()
+		currentState.LastSeverity = severity
+		currentState.LastTemperature = smart.Temperature
+		currentState.LastCriticalWarning = smart.CriticalWarning
+		return true
+	}
+	
+	// Check cooldown for same severity
+	if time.Since(currentState.LastAlertTime) >= m.alertCooldown && severity > SeverityInfo {
+		currentState.LastAlertTime = time.Now()
+		currentState.LastSeverity = severity
+		currentState.LastTemperature = smart.Temperature
+		currentState.LastCriticalWarning = smart.CriticalWarning
+		return true
+	}
+	
+	return false
+}
+
 func (m *Monitor) sendDiskAlert(smart *SMARTData) {
-	alertKey := fmt.Sprintf("disk_%s", smart.Device)
-	if time.Since(m.lastAlerts[alertKey]) < m.alertCooldown {
+	severity := m.getOverallSeverity(smart)
+	
+	if !m.shouldSendAlert(smart, severity) {
 		return
 	}
 	
-	subject := fmt.Sprintf("Disk Health Alert: %s", smart.Device)
-	body := fmt.Sprintf(`Disk Health Alert
+	deviceType := "Disk"
+	if smart.IsNVMe {
+		deviceType = "NVMe SSD"
+	}
+	
+	// Include severity in subject
+	subject := fmt.Sprintf("[%s] %s Health Alert: %s", severity.String(), deviceType, smart.Device)
+	body := fmt.Sprintf(`%s Health Alert
 
+Severity: %s
 Device: %s
 Healthy: %v
 Temperature: %d°C
+`, deviceType, severity.String(), smart.Device, smart.Healthy, smart.Temperature)
 
-`, smart.Device, smart.Healthy, smart.Temperature)
+	// Add NVMe-specific information
+	if smart.IsNVMe {
+		body += fmt.Sprintf(`
+NVMe Specific Data:
+Critical Warning: 0x%x
+Wear Level: %d%%
+Available Spare: %d%%
+Data Written: %d units
+`, smart.CriticalWarning, smart.PercentageUsed, smart.AvailableSpare, smart.DataUnitsWritten)
+
+		// Add critical warning explanations
+		if smart.CriticalWarning > 0 {
+			body += "\nCritical Warning Details:\n"
+			if smart.CriticalWarning&1 != 0 {
+				body += "  - Available spare capacity has fallen below threshold\n"
+			}
+			if smart.CriticalWarning&2 != 0 {
+				body += "  - Temperature threshold exceeded\n"
+			}
+			if smart.CriticalWarning&4 != 0 {
+				body += "  - NVM subsystem reliability degraded\n"
+			}
+			if smart.CriticalWarning&8 != 0 {
+				body += "  - Media placed in read-only mode\n"
+			}
+			if smart.CriticalWarning&16 != 0 {
+				body += "  - Persistent memory region backed up (if applicable)\n"
+			}
+		}
+	}
 	
 	if len(smart.Errors) > 0 {
-		body += "Errors:\n"
+		body += "\nErrors:\n"
 		for _, err := range smart.Errors {
 			body += fmt.Sprintf("  %s\n", err)
 		}
@@ -331,8 +755,7 @@ Temperature: %d°C
 	if err := m.alerter.SendAlert(subject, body); err != nil {
 		log.Printf("Failed to send disk alert: %v", err)
 	} else {
-		m.lastAlerts[alertKey] = time.Now()
-		log.Printf("Sent disk health alert for %s", smart.Device)
+		log.Printf("Sent %s [%s] health alert for %s", deviceType, severity.String(), smart.Device)
 	}
 }
 
