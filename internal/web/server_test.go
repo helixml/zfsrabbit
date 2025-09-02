@@ -15,8 +15,8 @@ import (
 	"zfsrabbit/internal/monitor"
 	"zfsrabbit/internal/restore"
 	"zfsrabbit/internal/scheduler"
-	"zfsrabbit/internal/zfs"
 	"zfsrabbit/internal/transport"
+	"zfsrabbit/internal/zfs"
 )
 
 // MockZFSExecutor for web server tests
@@ -38,7 +38,7 @@ func (m *MockZFSExecutor) Run(cmd *exec.Cmd) error {
 	return nil
 }
 
-// MockAlerter for web server tests  
+// MockAlerter for web server tests
 type MockAlerter struct{}
 
 func (m *MockAlerter) SendAlert(subject, body string) error {
@@ -75,11 +75,11 @@ func createTestServer(t *testing.T) *Server {
 	// Create mocked components for testing
 	mockExecutor := &MockZFSExecutor{}
 	zfsManager := zfs.NewWithExecutor(cfg.ZFS.Dataset, cfg.ZFS.SendCompression, cfg.ZFS.Recursive, mockExecutor)
-	
+
 	// Use non-existent host to avoid real network calls
 	cfg.SSH.RemoteHost = "nonexistent.test.invalid"
 	sshTransport := transport.NewSSHTransport(&cfg.SSH)
-	
+
 	// Use mocked alerter to avoid nil pointer panics
 	mockAlerter := &MockAlerter{}
 	sched := scheduler.New(cfg, zfsManager, sshTransport, mockAlerter)

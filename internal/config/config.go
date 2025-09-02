@@ -29,21 +29,21 @@ type ZFSConfig struct {
 }
 
 type SSHConfig struct {
-	RemoteHost   string `yaml:"remote_host"`
-	RemoteUser   string `yaml:"remote_user"`
-	PrivateKey   string `yaml:"private_key"`
+	RemoteHost    string `yaml:"remote_host"`
+	RemoteUser    string `yaml:"remote_user"`
+	PrivateKey    string `yaml:"private_key"`
 	RemoteDataset string `yaml:"remote_dataset"`
-	MbufferSize  string `yaml:"mbuffer_size"`
+	MbufferSize   string `yaml:"mbuffer_size"`
 }
 
 type EmailConfig struct {
-	SMTPHost     string `yaml:"smtp_host"`
-	SMTPPort     int    `yaml:"smtp_port"`
-	SMTPUser     string `yaml:"smtp_user"`
-	SMTPPassword string `yaml:"smtp_password"`
-	FromEmail    string `yaml:"from_email"`
+	SMTPHost     string   `yaml:"smtp_host"`
+	SMTPPort     int      `yaml:"smtp_port"`
+	SMTPUser     string   `yaml:"smtp_user"`
+	SMTPPassword string   `yaml:"smtp_password"`
+	FromEmail    string   `yaml:"from_email"`
 	ToEmails     []string `yaml:"to_emails"`
-	UseTLS       bool   `yaml:"use_tls"`
+	UseTLS       bool     `yaml:"use_tls"`
 }
 
 type SlackConfig struct {
@@ -58,8 +58,8 @@ type SlackConfig struct {
 }
 
 type ScheduleConfig struct {
-	SnapshotCron string        `yaml:"snapshot_cron"`
-	ScrubCron    string        `yaml:"scrub_cron"`
+	SnapshotCron    string        `yaml:"snapshot_cron"`
+	ScrubCron       string        `yaml:"scrub_cron"`
 	MonitorInterval time.Duration `yaml:"monitor_interval"`
 }
 

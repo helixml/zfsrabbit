@@ -9,7 +9,9 @@
       "Bash(make test-unit:*)",
       "WebSearch",
       "WebFetch(domain:api.slack.com)",
-      "WebFetch(domain:docs.slack.dev)"
+      "WebFetch(domain:docs.slack.dev)",
+      "Bash(gofmt:*)",
+      "Bash(go vet:*)"
     ],
     "deny": [],
     "ask": []

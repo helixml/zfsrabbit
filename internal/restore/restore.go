@@ -47,9 +47,9 @@ func (r *RestoreManager) RestoreSnapshotFromDataset(sourceDataset, snapshotName,
 		Progress:      0,
 		StartTime:     time.Now(),
 	}
-	
+
 	go r.performRestore(job)
-	
+
 	return job, nil
 }
 
@@ -59,7 +59,7 @@ func (r *RestoreManager) performRestore(job *RestoreJob) {
 		sourceInfo = job.SourceDataset
 	}
 	log.Printf("Starting restore job %s: %s@%s -> %s", job.ID, sourceInfo, job.SnapshotName, job.TargetDataset)
-	
+
 	defer func() {
 		if r := recover(); r != nil {
 			job.Status = "failed"
@@ -69,14 +69,14 @@ func (r *RestoreManager) performRestore(job *RestoreJob) {
 			log.Printf("Restore job %s failed with panic: %v", job.ID, r)
 		}
 	}()
-	
+
 	// Step 1: Verify remote snapshot exists
 	job.Status = "verifying"
 	job.Progress = 10
-	
+
 	var remoteSnapshots []string
 	var err error
-	
+
 	if job.SourceDataset != "" {
 		// Get snapshots from specific dataset
 		remoteSnapshots, err = r.transport.GetSnapshotsForDataset(job.SourceDataset)
@@ -92,7 +92,7 @@ func (r *RestoreManager) performRestore(job *RestoreJob) {
 			return
 		}
 	}
-	
+
 	found := false
 	for _, snap := range remoteSnapshots {
 		if snap == job.SnapshotName {
@@ -100,59 +100,59 @@ func (r *RestoreManager) performRestore(job *RestoreJob) {
 			break
 		}
 	}
-	
+
 	if !found {
 		r.failJob(job, fmt.Errorf("snapshot %s not found on remote server", job.SnapshotName))
 		return
 	}
-	
+
 	// Step 2: Check if target dataset exists and handle appropriately
 	job.Status = "preparing"
 	job.Progress = 20
-	
+
 	// Check if target dataset already exists
 	exists, err := r.datasetExists(job.TargetDataset)
 	if err != nil {
 		r.failJob(job, fmt.Errorf("failed to check if dataset exists: %w", err))
 		return
 	}
-	
+
 	if exists {
 		// If dataset exists, we'll use -F flag to force overwrite
 		log.Printf("Target dataset %s exists, will overwrite", job.TargetDataset)
 	}
-	
+
 	// Step 3: Initiate restore from remote
 	job.Status = "restoring"
 	job.Progress = 30
-	
+
 	var restoreErr error
 	if job.SourceDataset != "" {
 		restoreErr = r.transport.RestoreSnapshotFromDataset(job.SourceDataset, job.SnapshotName, job.TargetDataset)
 	} else {
 		restoreErr = r.transport.RestoreSnapshot(job.SnapshotName, job.TargetDataset)
 	}
-	
+
 	if restoreErr != nil {
 		r.failJob(job, fmt.Errorf("restore failed: %w", restoreErr))
 		return
 	}
-	
+
 	// Step 4: Verify restore completed successfully
 	job.Status = "verifying"
 	job.Progress = 90
-	
+
 	if err := r.verifyRestore(job.TargetDataset, job.SnapshotName); err != nil {
 		r.failJob(job, fmt.Errorf("restore verification failed: %w", err))
 		return
 	}
-	
+
 	// Step 5: Complete
 	job.Status = "completed"
 	job.Progress = 100
 	endTime := time.Now()
 	job.EndTime = &endTime
-	
+
 	log.Printf("Restore job %s completed successfully", job.ID)
 }
 
@@ -179,14 +179,14 @@ func (r *RestoreManager) verifyRestore(dataset, snapshotName string) error {
 	if err != nil {
 		return fmt.Errorf("failed to list snapshots after restore: %w", err)
 	}
-	
+
 	// Look for the restored snapshot
 	for _, snap := range snapshots {
 		if snap.Dataset == dataset && snap.Name == snapshotName {
 			return nil
 		}
 	}
-	
+
 	return fmt.Errorf("restored snapshot not found in target dataset")
 }
 
@@ -217,19 +217,19 @@ func (r *RestoreManager) StartRestoreWithTracking(snapshotName, targetDataset st
 func (r *RestoreManager) StartRestoreFromDatasetWithTracking(sourceDataset, snapshotName, targetDataset string) (*RestoreJob, error) {
 	var job *RestoreJob
 	var err error
-	
+
 	if sourceDataset != "" {
 		job, err = r.RestoreSnapshotFromDataset(sourceDataset, snapshotName, targetDataset)
 	} else {
 		job, err = r.RestoreSnapshot(snapshotName, targetDataset)
 	}
-	
+
 	if err != nil {
 		return nil, err
 	}
-	
+
 	activeJobs[job.ID] = job
-	
+
 	// Clean up completed jobs after 1 hour
 	go func() {
 		time.Sleep(1 * time.Hour)
@@ -237,6 +237,6 @@ func (r *RestoreManager) StartRestoreFromDatasetWithTracking(sourceDataset, snap
 			delete(activeJobs, job.ID)
 		}
 	}()
-	
+
 	return job, nil
 }

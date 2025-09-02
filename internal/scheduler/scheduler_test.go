@@ -68,12 +68,12 @@ func TestNewScheduler(t *testing.T) {
 	// Use mocked executor for ZFS manager to avoid real ZFS calls
 	mockExecutor := NewMockZFSExecutor()
 	zfsManager := zfs.NewWithExecutor(cfg.ZFS.Dataset, cfg.ZFS.SendCompression, cfg.ZFS.Recursive, mockExecutor)
-	
+
 	// For SSH transport, we still need the concrete type but with non-existent host
 	// This will fail quickly without making actual network calls
-	cfg.SSH.RemoteHost = "nonexistent.test.invalid" 
+	cfg.SSH.RemoteHost = "nonexistent.test.invalid"
 	sshTransport := transport.NewSSHTransport(&cfg.SSH)
-	
+
 	mockAlerter := mocks.NewMockAlerter()
 
 	scheduler := New(cfg, zfsManager, sshTransport, mockAlerter)
@@ -124,11 +124,11 @@ func TestSchedulerStart(t *testing.T) {
 	// Use mocked executor for ZFS manager to avoid real ZFS calls
 	mockExecutor := NewMockZFSExecutor()
 	zfsManager := zfs.NewWithExecutor(cfg.ZFS.Dataset, cfg.ZFS.SendCompression, cfg.ZFS.Recursive, mockExecutor)
-	
+
 	// Use non-existent host to avoid real network calls
 	cfg.SSH.RemoteHost = "nonexistent.test.invalid"
 	sshTransport := transport.NewSSHTransport(&cfg.SSH)
-	
+
 	mockAlerter := mocks.NewMockAlerter()
 
 	scheduler := New(cfg, zfsManager, sshTransport, mockAlerter)
@@ -166,11 +166,11 @@ func TestSchedulerStop(t *testing.T) {
 	// Use mocked executor for ZFS manager to avoid real ZFS calls
 	mockExecutor := NewMockZFSExecutor()
 	zfsManager := zfs.NewWithExecutor(cfg.ZFS.Dataset, cfg.ZFS.SendCompression, cfg.ZFS.Recursive, mockExecutor)
-	
+
 	// Use non-existent host to avoid real network calls
 	cfg.SSH.RemoteHost = "nonexistent.test.invalid"
 	sshTransport := transport.NewSSHTransport(&cfg.SSH)
-	
+
 	mockAlerter := mocks.NewMockAlerter()
 
 	scheduler := New(cfg, zfsManager, sshTransport, mockAlerter)
@@ -205,11 +205,11 @@ func TestTriggerSnapshot(t *testing.T) {
 	// Use mocked executor for ZFS manager to avoid real ZFS calls
 	mockExecutor := NewMockZFSExecutor()
 	zfsManager := zfs.NewWithExecutor(cfg.ZFS.Dataset, cfg.ZFS.SendCompression, cfg.ZFS.Recursive, mockExecutor)
-	
+
 	// Use non-existent host to avoid real network calls
 	cfg.SSH.RemoteHost = "nonexistent.test.invalid"
 	sshTransport := transport.NewSSHTransport(&cfg.SSH)
-	
+
 	mockAlerter := mocks.NewMockAlerter()
 
 	scheduler := New(cfg, zfsManager, sshTransport, mockAlerter)
@@ -217,7 +217,7 @@ func TestTriggerSnapshot(t *testing.T) {
 	// This will trigger the snapshot process but will likely fail due to
 	// missing ZFS commands. That's expected in a test environment.
 	err := scheduler.TriggerSnapshot()
-	
+
 	// We don't check for error here because ZFS commands won't work in test environment
 	// The important thing is that the method doesn't panic and returns
 	_ = err
@@ -244,11 +244,11 @@ func TestTriggerScrub(t *testing.T) {
 	// Use mocked executor for ZFS manager to avoid real ZFS calls
 	mockExecutor := NewMockZFSExecutor()
 	zfsManager := zfs.NewWithExecutor(cfg.ZFS.Dataset, cfg.ZFS.SendCompression, cfg.ZFS.Recursive, mockExecutor)
-	
+
 	// Use non-existent host to avoid real network calls
 	cfg.SSH.RemoteHost = "nonexistent.test.invalid"
 	sshTransport := transport.NewSSHTransport(&cfg.SSH)
-	
+
 	mockAlerter := mocks.NewMockAlerter()
 
 	scheduler := New(cfg, zfsManager, sshTransport, mockAlerter)
@@ -256,7 +256,7 @@ func TestTriggerScrub(t *testing.T) {
 	// This will trigger the scrub process but will likely fail due to
 	// missing ZFS commands. That's expected in a test environment.
 	err := scheduler.TriggerScrub()
-	
+
 	// We don't check for error here because ZFS commands won't work in test environment
 	// The important thing is that the method doesn't panic and returns
 	_ = err
@@ -283,11 +283,11 @@ func TestSchedulerBasicFunctionality(t *testing.T) {
 	// Use mocked executor for ZFS manager to avoid real ZFS calls
 	mockExecutor := NewMockZFSExecutor()
 	zfsManager := zfs.NewWithExecutor(cfg.ZFS.Dataset, cfg.ZFS.SendCompression, cfg.ZFS.Recursive, mockExecutor)
-	
+
 	// Use non-existent host to avoid real network calls
 	cfg.SSH.RemoteHost = "nonexistent.test.invalid"
 	sshTransport := transport.NewSSHTransport(&cfg.SSH)
-	
+
 	mockAlerter := mocks.NewMockAlerter()
 
 	scheduler := New(cfg, zfsManager, sshTransport, mockAlerter)
@@ -296,7 +296,7 @@ func TestSchedulerBasicFunctionality(t *testing.T) {
 	if scheduler == nil {
 		t.Fatal("Expected scheduler to be created")
 	}
-	
+
 	// Test starting and stopping multiple times doesn't panic
 	scheduler.Start()
 	scheduler.Stop()
@@ -328,7 +328,7 @@ func TestInvalidCronExpressions(t *testing.T) {
 
 	// This should not panic even with invalid cron expressions
 	scheduler := New(cfg, zfsManager, sshTransport, mockAlerter)
-	
+
 	if scheduler == nil {
 		t.Fatal("Expected scheduler to be created even with invalid cron")
 	}

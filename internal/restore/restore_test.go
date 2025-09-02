@@ -16,7 +16,7 @@ func TestNewRestoreManager(t *testing.T) {
 		RemoteUser:    "testuser",
 		RemoteDataset: "backup/test",
 	}
-	
+
 	sshTransport := transport.NewSSHTransport(cfg)
 	zfsManager := zfs.New("tank/test", "lz4", false)
 
@@ -41,7 +41,7 @@ func TestRestoreSnapshot(t *testing.T) {
 		RemoteUser:    "testuser",
 		RemoteDataset: "backup/test",
 	}
-	
+
 	sshTransport := transport.NewSSHTransport(cfg)
 	zfsManager := zfs.New("tank/test", "lz4", false)
 	manager := New(sshTransport, zfsManager)
@@ -85,7 +85,7 @@ func TestRestoreSnapshotFromDataset(t *testing.T) {
 		RemoteUser:    "testuser",
 		RemoteDataset: "backup/test",
 	}
-	
+
 	sshTransport := transport.NewSSHTransport(cfg)
 	zfsManager := zfs.New("tank/test", "lz4", false)
 	manager := New(sshTransport, zfsManager)
@@ -140,7 +140,7 @@ func TestStartRestoreWithTracking(t *testing.T) {
 		RemoteUser:    "testuser",
 		RemoteDataset: "backup/test",
 	}
-	
+
 	sshTransport := transport.NewSSHTransport(cfg)
 	zfsManager := zfs.New("tank/test", "lz4", false)
 	manager := New(sshTransport, zfsManager)
@@ -171,7 +171,7 @@ func TestStartRestoreFromDatasetWithTracking(t *testing.T) {
 		RemoteUser:    "testuser",
 		RemoteDataset: "backup/test",
 	}
-	
+
 	sshTransport := transport.NewSSHTransport(cfg)
 	zfsManager := zfs.New("tank/test", "lz4", false)
 	manager := New(sshTransport, zfsManager)
@@ -202,7 +202,7 @@ func TestGetJob(t *testing.T) {
 		RemoteUser:    "testuser",
 		RemoteDataset: "backup/test",
 	}
-	
+
 	sshTransport := transport.NewSSHTransport(cfg)
 	zfsManager := zfs.New("tank/test", "lz4", false)
 	manager := New(sshTransport, zfsManager)
@@ -236,7 +236,7 @@ func TestListJobs(t *testing.T) {
 		RemoteUser:    "testuser",
 		RemoteDataset: "backup/test",
 	}
-	
+
 	sshTransport := transport.NewSSHTransport(cfg)
 	zfsManager := zfs.New("tank/test", "lz4", false)
 	manager := New(sshTransport, zfsManager)
@@ -250,7 +250,7 @@ func TestListJobs(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
-	
+
 	job2, err := manager.StartRestoreWithTracking("test-snapshot2", "tank/test2")
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)

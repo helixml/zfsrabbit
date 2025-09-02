@@ -6,12 +6,12 @@ import (
 
 // MockAlerter mocks alert functionality
 type MockAlerter struct {
-	SentAlerts        []Alert
-	SyncSuccesses     []SyncSuccess
-	SyncFailures      []SyncFailure
-	SystemStatuses    []map[string]interface{}
-	SendAlertError    error
-	TestConnectError  error
+	SentAlerts       []Alert
+	SyncSuccesses    []SyncSuccess
+	SyncFailures     []SyncFailure
+	SystemStatuses   []map[string]interface{}
+	SendAlertError   error
+	TestConnectError error
 }
 
 type Alert struct {

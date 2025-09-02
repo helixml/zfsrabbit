@@ -15,18 +15,18 @@ type SlackAlerter struct {
 }
 
 type SlackMessage struct {
-	Channel   string            `json:"channel,omitempty"`
-	Username  string            `json:"username,omitempty"`
-	IconEmoji string            `json:"icon_emoji,omitempty"`
-	Text      string            `json:"text,omitempty"`
-	Blocks    []SlackBlock      `json:"blocks,omitempty"`
+	Channel   string       `json:"channel,omitempty"`
+	Username  string       `json:"username,omitempty"`
+	IconEmoji string       `json:"icon_emoji,omitempty"`
+	Text      string       `json:"text,omitempty"`
+	Blocks    []SlackBlock `json:"blocks,omitempty"`
 }
 
 type SlackBlock struct {
-	Type string                 `json:"type"`
-	Text *SlackText             `json:"text,omitempty"`
-	Fields []SlackField         `json:"fields,omitempty"`
-	Accessory *SlackAccessory   `json:"accessory,omitempty"`
+	Type      string          `json:"type"`
+	Text      *SlackText      `json:"text,omitempty"`
+	Fields    []SlackField    `json:"fields,omitempty"`
+	Accessory *SlackAccessory `json:"accessory,omitempty"`
 }
 
 type SlackText struct {
@@ -65,9 +65,9 @@ func (s *SlackAlerter) SendSyncSuccess(snapshot, dataset string, duration time.D
 	}
 
 	title := "✅ ZFS Sync Completed"
-	message := fmt.Sprintf("Successfully replicated snapshot `%s` from dataset `%s`\nDuration: %s", 
+	message := fmt.Sprintf("Successfully replicated snapshot `%s` from dataset `%s`\nDuration: %s",
 		snapshot, dataset, duration.String())
-	
+
 	return s.sendMessage(s.formatAlert(title, message, "good"))
 }
 
@@ -77,9 +77,9 @@ func (s *SlackAlerter) SendSyncFailure(snapshot, dataset string, err error) erro
 	}
 
 	title := "❌ ZFS Sync Failed"
-	message := fmt.Sprintf("Failed to replicate snapshot `%s` from dataset `%s`\nError: %s", 
+	message := fmt.Sprintf("Failed to replicate snapshot `%s` from dataset `%s`\nError: %s",
 		snapshot, dataset, err.Error())
-	
+
 	return s.sendMessage(s.formatAlert(title, message, "danger"))
 }
 
@@ -114,7 +114,7 @@ func (s *SlackAlerter) SendSystemStatus(status map[string]interface{}) error {
 				})
 			}
 		}
-		
+
 		if len(fields) > 0 {
 			blocks = append(blocks, SlackBlock{
 				Type:   "section",
@@ -138,12 +138,12 @@ func (s *SlackAlerter) SendSystemStatus(status map[string]interface{}) error {
 				}
 				fields = append(fields, SlackField{
 					Type: "mrkdwn",
-					Text: fmt.Sprintf("*%s %s:*\n%s %d°C", emoji, disk, 
+					Text: fmt.Sprintf("*%s %s:*\n%s %d°C", emoji, disk,
 						map[bool]string{true: "Healthy", false: "Issues"}[healthy], temp),
 				})
 			}
 		}
-		
+
 		if len(fields) > 0 {
 			blocks = append(blocks, SlackBlock{
 				Type:   "section",

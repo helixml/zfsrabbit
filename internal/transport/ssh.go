@@ -127,20 +127,20 @@ func (t *SSHTransport) ListAllRemoteDatasets() (map[string][]string, error) {
 
 	datasets := make(map[string][]string)
 	lines := strings.Split(strings.TrimSpace(output), "\n")
-	
+
 	for _, dataset := range lines {
 		dataset = strings.TrimSpace(dataset)
 		if dataset == "" {
 			continue
 		}
-		
+
 		// Get snapshots for this dataset
 		snapshots, err := t.GetSnapshotsForDataset(dataset)
 		if err != nil {
 			// Continue if we can't get snapshots for this dataset
 			continue
 		}
-		
+
 		if len(snapshots) > 0 {
 			datasets[dataset] = snapshots
 		}
@@ -224,7 +224,7 @@ func (t *SSHTransport) RestoreSnapshotFromDataset(remoteDataset, snapshotName, l
 	defer session.Close()
 
 	sendCmd := fmt.Sprintf("zfs send %s@%s", remoteDataset, snapshotName)
-	
+
 	session.Stdout = &mbufferReceiver{
 		dataset: localDataset,
 		size:    t.config.MbufferSize,
@@ -240,7 +240,7 @@ type mbufferReceiver struct {
 
 func (m *mbufferReceiver) Write(p []byte) (n int, err error) {
 	cmd := exec.Command("sh", "-c", fmt.Sprintf("mbuffer -s 128k -m %s | zfs receive -F %s", m.size, m.dataset))
-	
+
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return 0, err

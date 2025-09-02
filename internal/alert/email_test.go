@@ -73,17 +73,17 @@ func TestEmailAlerterBuildMessage(t *testing.T) {
 
 func TestEmailAlerterSendAlert(t *testing.T) {
 	cfg := &config.EmailConfig{
-		SMTPHost:     "",  // Empty host will cause validation error
-		SMTPPort:     587,
-		FromEmail:    "alerts@test.com",
-		ToEmails:     []string{},  // Empty recipients
-		UseTLS:       false,
+		SMTPHost:  "", // Empty host will cause validation error
+		SMTPPort:  587,
+		FromEmail: "alerts@test.com",
+		ToEmails:  []string{}, // Empty recipients
+		UseTLS:    false,
 	}
 
 	alerter := NewEmailAlerter(cfg)
 
 	err := alerter.SendAlert("Test", "Test message")
-	
+
 	// Should fail due to incomplete configuration
 	if err == nil {
 		t.Error("Expected error due to incomplete configuration")
@@ -92,13 +92,13 @@ func TestEmailAlerterSendAlert(t *testing.T) {
 
 func TestEmailAlerterTestConnection(t *testing.T) {
 	cfg := &config.EmailConfig{
-		SMTPHost: "",  // Empty config should cause error
+		SMTPHost: "", // Empty config should cause error
 	}
 
 	alerter := NewEmailAlerter(cfg)
 
 	err := alerter.TestConnection()
-	
+
 	// Should call SendAlert with test message, which should fail
 	if err == nil {
 		t.Error("Expected error from test connection")

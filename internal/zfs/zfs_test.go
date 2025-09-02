@@ -45,7 +45,7 @@ func (m *MockCommandExecutor) Command(name string, args ...string) *exec.Cmd {
 
 func (m *MockCommandExecutor) Output(cmd *exec.Cmd) ([]byte, error) {
 	cmdStr := strings.Join(cmd.Args, " ")
-	
+
 	for i, mockCmd := range m.commands {
 		if strings.Contains(cmdStr, mockCmd.expectedCmd) || mockCmd.expectedCmd == cmdStr {
 			// Remove used command
@@ -53,13 +53,13 @@ func (m *MockCommandExecutor) Output(cmd *exec.Cmd) ([]byte, error) {
 			return []byte(mockCmd.output), mockCmd.err
 		}
 	}
-	
+
 	return []byte(""), nil
 }
 
 func (m *MockCommandExecutor) Run(cmd *exec.Cmd) error {
 	cmdStr := strings.Join(cmd.Args, " ")
-	
+
 	for i, mockCmd := range m.commands {
 		if strings.Contains(cmdStr, mockCmd.expectedCmd) || mockCmd.expectedCmd == cmdStr {
 			// Remove used command
@@ -67,7 +67,7 @@ func (m *MockCommandExecutor) Run(cmd *exec.Cmd) error {
 			return mockCmd.err
 		}
 	}
-	
+
 	return nil
 }
 
@@ -97,15 +97,15 @@ func TestNewManager(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			manager := New(tt.dataset, tt.sendCompression, tt.recursive)
-			
+
 			if manager.dataset != tt.dataset {
 				t.Errorf("Expected dataset %s, got %s", tt.dataset, manager.dataset)
 			}
-			
+
 			if manager.sendCompression != tt.sendCompression {
 				t.Errorf("Expected sendCompression %s, got %s", tt.sendCompression, manager.sendCompression)
 			}
-			
+
 			if manager.recursive != tt.recursive {
 				t.Errorf("Expected recursive %t, got %t", tt.recursive, manager.recursive)
 			}
@@ -148,16 +148,16 @@ func TestCreateSnapshot(t *testing.T) {
 				expectedError = fmt.Errorf("mock error")
 			}
 			executor.AddCommand(tt.expectedCmd, "", expectedError)
-			
+
 			manager := NewWithExecutor(tt.dataset, "lz4", tt.recursive, executor)
-			
+
 			// Override the actual command execution for testing
 			err := manager.CreateSnapshot(tt.snapshotName)
-			
+
 			if tt.expectError && err == nil {
 				t.Error("Expected error but got none")
 			}
-			
+
 			if !tt.expectError && err != nil {
 				t.Errorf("Unexpected error: %v", err)
 			}
@@ -169,12 +169,12 @@ func TestCreateSnapshot(t *testing.T) {
 
 func TestListSnapshots(t *testing.T) {
 	tests := []struct {
-		name           string
-		dataset        string
-		mockOutput     string
-		expectedCount  int
-		expectedNames  []string
-		expectError    bool
+		name          string
+		dataset       string
+		mockOutput    string
+		expectedCount int
+		expectedNames []string
+		expectError   bool
 	}{
 		{
 			name:    "list snapshots successfully",
@@ -202,32 +202,32 @@ tank/test@snap2	Tue Jan  3 10:30 2023	2.34G	5.67G`,
 			if tt.expectError {
 				expectedError = fmt.Errorf("mock error")
 			}
-			
+
 			expectedCmd := fmt.Sprintf("zfs list -t snapshot -H -o name,creation,used,refer -s creation %s", tt.dataset)
 			executor.AddCommand(expectedCmd, tt.mockOutput, expectedError)
-			
+
 			manager := NewWithExecutor(tt.dataset, "lz4", false, executor)
-			
+
 			snapshots, err := manager.ListSnapshots()
-			
+
 			if tt.expectError && err == nil {
 				t.Error("Expected error but got none")
 			}
-			
+
 			if !tt.expectError && err != nil {
 				t.Errorf("Unexpected error: %v", err)
 			}
-			
+
 			if len(snapshots) != tt.expectedCount {
 				t.Errorf("Expected %d snapshots, got %d", tt.expectedCount, len(snapshots))
 			}
-			
+
 			for i, expectedName := range tt.expectedNames {
 				if i >= len(snapshots) {
 					t.Errorf("Expected snapshot %s at index %d, but only got %d snapshots", expectedName, i, len(snapshots))
 					continue
 				}
-				
+
 				if snapshots[i].Name != expectedName {
 					t.Errorf("Expected snapshot name %s, got %s", expectedName, snapshots[i].Name)
 				}
@@ -241,12 +241,12 @@ tank/test@snap2	Tue Jan  3 10:30 2023	2.34G	5.67G`,
 func parseSnapshotOutput(output string) ([]Snapshot, error) {
 	var snapshots []Snapshot
 	lines := strings.Split(strings.TrimSpace(output), "\n")
-	
+
 	for _, line := range lines {
 		if line == "" {
 			continue
 		}
-		
+
 		fields := strings.Fields(line)
 		if len(fields) >= 4 {
 			parts := strings.Split(fields[0], "@")
@@ -257,7 +257,7 @@ func parseSnapshotOutput(output string) ([]Snapshot, error) {
 					// For testing, just use current time
 					created = time.Now()
 				}
-				
+
 				snapshots = append(snapshots, Snapshot{
 					Name:    parts[1],
 					Created: created,
@@ -268,7 +268,7 @@ func parseSnapshotOutput(output string) ([]Snapshot, error) {
 			}
 		}
 	}
-	
+
 	return snapshots, nil
 }
 
@@ -310,15 +310,15 @@ func TestSendSnapshot(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			manager := New(tt.dataset, tt.sendCompression, tt.recursive)
-			
+
 			cmd, err := manager.SendSnapshot(tt.snapshotName)
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 			}
-			
+
 			expectedCmd := "zfs " + strings.Join(tt.expectedArgs, " ")
 			actualCmd := strings.Join(cmd.Args, " ")
-			
+
 			if !strings.Contains(actualCmd, strings.Join(tt.expectedArgs, " ")) {
 				t.Errorf("Expected command to contain %s, got %s", expectedCmd, actualCmd)
 			}
@@ -351,13 +351,13 @@ func TestGetPools(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Note: GetPools is a package function, so we'd need to refactor it for proper testing
 			// For now, we'll test the parsing logic directly
-			
+
 			pools := parsePoolOutput(tt.mockOutput)
-			
+
 			if len(pools) != len(tt.expectedPools) {
 				t.Errorf("Expected %d pools, got %d", len(tt.expectedPools), len(pools))
 			}
-			
+
 			for i, expectedPool := range tt.expectedPools {
 				if i >= len(pools) || pools[i] != expectedPool {
 					t.Errorf("Expected pool %s at index %d, got %v", expectedPool, i, pools)
@@ -371,14 +371,14 @@ func TestGetPools(t *testing.T) {
 func parsePoolOutput(output string) []string {
 	var pools []string
 	lines := strings.Split(strings.TrimSpace(output), "\n")
-	
+
 	for _, line := range lines {
 		pool := strings.TrimSpace(line)
 		if pool != "" {
 			pools = append(pools, pool)
 		}
 	}
-	
+
 	return pools
 }
 

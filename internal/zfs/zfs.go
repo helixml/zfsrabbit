@@ -37,11 +37,11 @@ func (d *DefaultCommandExecutor) Run(cmd *exec.Cmd) error {
 }
 
 type Snapshot struct {
-	Name     string
-	Created  time.Time
-	Used     string
-	Refer    string
-	Dataset  string
+	Name    string
+	Created time.Time
+	Used    string
+	Refer   string
+	Dataset string
 }
 
 type PoolStatus struct {
@@ -53,11 +53,11 @@ type PoolStatus struct {
 }
 
 type DeviceStatus struct {
-	Name   string
-	State  string
-	Read   int
-	Write  int
-	Cksum  int
+	Name  string
+	State string
+	Read  int
+	Write int
+	Cksum int
 }
 
 func New(dataset, sendCompression string, recursive bool) *Manager {
@@ -80,13 +80,13 @@ func NewWithExecutor(dataset, sendCompression string, recursive bool, executor C
 
 func (m *Manager) CreateSnapshot(name string) error {
 	snapshotName := fmt.Sprintf("%s@%s", m.dataset, name)
-	
+
 	args := []string{"snapshot"}
 	if m.recursive {
 		args = append(args, "-r")
 	}
 	args = append(args, snapshotName)
-	
+
 	cmd := m.executor.Command("zfs", args...)
 	return m.executor.Run(cmd)
 }
@@ -97,10 +97,10 @@ func (m *Manager) ListSnapshots() ([]Snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	var snapshots []Snapshot
 	scanner := bufio.NewScanner(strings.NewReader(string(output)))
-	
+
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
 		if len(fields) >= 4 {
@@ -117,7 +117,7 @@ func (m *Manager) ListSnapshots() ([]Snapshot, error) {
 			}
 		}
 	}
-	
+
 	return snapshots, scanner.Err()
 }
 
@@ -129,7 +129,7 @@ func (m *Manager) DestroySnapshot(name string) error {
 
 func (m *Manager) SendSnapshot(snapshot string) (*exec.Cmd, error) {
 	snapshotName := fmt.Sprintf("%s@%s", m.dataset, snapshot)
-	
+
 	args := []string{"send"}
 	if m.sendCompression != "" {
 		args = append(args, "-c")
@@ -138,7 +138,7 @@ func (m *Manager) SendSnapshot(snapshot string) (*exec.Cmd, error) {
 		args = append(args, "-R")
 	}
 	args = append(args, snapshotName)
-	
+
 	cmd := m.executor.Command("zfs", args...)
 	return cmd, nil
 }
@@ -146,7 +146,7 @@ func (m *Manager) SendSnapshot(snapshot string) (*exec.Cmd, error) {
 func (m *Manager) SendIncremental(fromSnapshot, toSnapshot string) (*exec.Cmd, error) {
 	fromName := fmt.Sprintf("%s@%s", m.dataset, fromSnapshot)
 	toName := fmt.Sprintf("%s@%s", m.dataset, toSnapshot)
-	
+
 	args := []string{"send"}
 	if m.sendCompression != "" {
 		args = append(args, "-c")
@@ -155,7 +155,7 @@ func (m *Manager) SendIncremental(fromSnapshot, toSnapshot string) (*exec.Cmd, e
 		args = append(args, "-R")
 	}
 	args = append(args, "-i", fromName, toName)
-	
+
 	cmd := m.executor.Command("zfs", args...)
 	return cmd, nil
 }
@@ -171,20 +171,20 @@ func GetPoolStatus(pool string) (*PoolStatus, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return parsePoolStatus(string(output))
 }
 
 func parsePoolStatus(output string) (*PoolStatus, error) {
 	lines := strings.Split(output, "\n")
 	status := &PoolStatus{}
-	
+
 	var inConfig bool
 	var inErrors bool
-	
+
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		
+
 		if strings.HasPrefix(line, "pool:") {
 			status.Pool = strings.TrimSpace(strings.TrimPrefix(line, "pool:"))
 		} else if strings.HasPrefix(line, "state:") {
@@ -205,18 +205,18 @@ func parsePoolStatus(output string) (*PoolStatus, error) {
 			status.Errors = append(status.Errors, line)
 		}
 	}
-	
+
 	return status, nil
 }
 
 func parseDeviceStatus(line string) *DeviceStatus {
 	re := regexp.MustCompile(`^\s*(\S+)\s+(\S+)\s+(\d+)\s+(\d+)\s+(\d+)`)
 	matches := re.FindStringSubmatch(line)
-	
+
 	if len(matches) != 6 {
 		return nil
 	}
-	
+
 	return &DeviceStatus{
 		Name:  matches[1],
 		State: matches[2],
@@ -243,16 +243,16 @@ func GetPools() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	var pools []string
 	scanner := bufio.NewScanner(strings.NewReader(string(output)))
-	
+
 	for scanner.Scan() {
 		pool := strings.TrimSpace(scanner.Text())
 		if pool != "" {
 			pools = append(pools, pool)
 		}
 	}
-	
+
 	return pools, scanner.Err()
 }

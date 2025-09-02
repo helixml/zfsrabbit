@@ -42,7 +42,7 @@ func (m *MockCommandExecutor) AddCommand(command, output string, err error) {
 func (m *MockCommandExecutor) Command(name string, args ...string) *exec.Cmd {
 	cmdStr := name + " " + strings.Join(args, " ")
 	m.CallLog = append(m.CallLog, cmdStr)
-	
+
 	// Return a dummy command for now - we'll handle execution in Output/Run
 	return &exec.Cmd{}
 }
@@ -51,13 +51,13 @@ func (m *MockCommandExecutor) Output(cmd *exec.Cmd) ([]byte, error) {
 	if len(m.Commands) == 0 {
 		return []byte(""), nil
 	}
-	
+
 	// Return the first matching command
 	mock := m.Commands[0]
 	if len(m.Commands) > 1 {
 		m.Commands = m.Commands[1:]
 	}
-	
+
 	return []byte(mock.Output), mock.Error
 }
 
@@ -65,13 +65,13 @@ func (m *MockCommandExecutor) Run(cmd *exec.Cmd) error {
 	if len(m.Commands) == 0 {
 		return nil
 	}
-	
+
 	// Return the first matching command
 	mock := m.Commands[0]
 	if len(m.Commands) > 1 {
 		m.Commands = m.Commands[1:]
 	}
-	
+
 	return mock.Error
 }
 

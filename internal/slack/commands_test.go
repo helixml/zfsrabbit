@@ -54,11 +54,11 @@ func createTestHandler(t *testing.T) *CommandHandler {
 	// Use mocked components to avoid real ZFS/SSH operations
 	mockExecutor := &MockZFSExecutor{}
 	zfsManager := zfs.NewWithExecutor(zfsCfg.ZFS.Dataset, zfsCfg.ZFS.SendCompression, zfsCfg.ZFS.Recursive, mockExecutor)
-	
+
 	// Use non-existent host to avoid real network calls
 	zfsCfg.SSH.RemoteHost = "nonexistent.test.invalid"
 	sshTransport := transport.NewSSHTransport(&zfsCfg.SSH)
-	
+
 	mockAlerter := mocks.NewMockAlerter()
 	sched := scheduler.New(zfsCfg, zfsManager, sshTransport, mockAlerter)
 	mon := monitor.New(zfsCfg, mockAlerter)

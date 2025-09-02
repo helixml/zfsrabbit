@@ -256,7 +256,7 @@ func TestSlackAlerterSendSystemStatus(t *testing.T) {
 func TestSlackAlerterDisabled(t *testing.T) {
 	cfg := &config.SlackConfig{
 		WebhookURL: "https://hooks.slack.com/test",
-		Enabled:    false,  // Disabled
+		Enabled:    false, // Disabled
 	}
 
 	alerter := NewSlackAlerter(cfg)
@@ -280,7 +280,7 @@ func TestSlackAlerterDisabled(t *testing.T) {
 
 func TestSlackAlerterEmptyWebhookURL(t *testing.T) {
 	cfg := &config.SlackConfig{
-		WebhookURL: "",  // Empty URL
+		WebhookURL: "", // Empty URL
 		Enabled:    true,
 	}
 

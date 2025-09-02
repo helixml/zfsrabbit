@@ -90,7 +90,7 @@ func (m *MockCommandExecutor) ExecuteCommand(command string) (string, error) {
 		}
 		return output, nil
 	}
-	
+
 	// Check for pattern matches
 	for pattern, output := range m.outputs {
 		if strings.Contains(command, pattern) {
@@ -100,7 +100,7 @@ func (m *MockCommandExecutor) ExecuteCommand(command string) (string, error) {
 			return output, nil
 		}
 	}
-	
+
 	return "", fmt.Errorf("command not mocked: %s", command)
 }
 
@@ -178,11 +178,11 @@ func TestMonitorStop(t *testing.T) {
 
 func TestCheckPoolHealth(t *testing.T) {
 	tests := []struct {
-		name               string
-		poolName           string
-		mockOutput         string
-		mockError          error
-		expectAlert        bool
+		name                 string
+		poolName             string
+		mockOutput           string
+		mockError            error
+		expectAlert          bool
 		expectedAlertSubject string
 	}{
 		{
@@ -326,14 +326,14 @@ func parsePoolStatusForTest(output string) (*zfs.PoolStatus, error) {
 					Name:  fields[0],
 					State: fields[1],
 				}
-				
+
 				// Parse error counts
 				if len(fields) >= 5 {
 					fmt.Sscanf(fields[2], "%d", &device.Read)
 					fmt.Sscanf(fields[3], "%d", &device.Write)
 					fmt.Sscanf(fields[4], "%d", &device.Cksum)
 				}
-				
+
 				status.Config = append(status.Config, device)
 			}
 		}
@@ -373,25 +373,25 @@ sr0`
 func (m *Monitor) parseSystemDisksOutput(output string) []string {
 	var disks []string
 	lines := strings.Split(strings.TrimSpace(output), "\n")
-	
+
 	for _, line := range lines {
 		disk := strings.TrimSpace(line)
 		if disk != "" && !strings.HasPrefix(disk, "loop") && !strings.HasPrefix(disk, "sr") {
 			disks = append(disks, "/dev/"+disk)
 		}
 	}
-	
+
 	return disks
 }
 
 func TestGetSMARTData(t *testing.T) {
 	tests := []struct {
-		name           string
-		device         string
-		mockOutput     string
-		expectHealthy  bool
-		expectErrors   int
-		expectTemp     int
+		name          string
+		device        string
+		mockOutput    string
+		expectHealthy bool
+		expectErrors  int
+		expectTemp    int
 	}{
 		{
 			name:   "healthy disk",
@@ -608,7 +608,7 @@ func TestSendNVMeAlert(t *testing.T) {
 		AvailableSpare:   5,
 		MaxTemperature:   90,
 		DataUnitsWritten: 1024000,
-		Errors:          []string{"High temperature: 85°C", "High wear level: 95%", "Low spare capacity: 5%"},
+		Errors:           []string{"High temperature: 85°C", "High wear level: 95%", "Low spare capacity: 5%"},
 	}
 
 	monitor.sendDiskAlert(smart)
@@ -752,9 +752,9 @@ func TestAlertEscalation(t *testing.T) {
 	smart1 := &SMARTData{
 		Device:         "/dev/nvme0n1",
 		IsNVMe:         true,
-		Temperature:    65,             // Warning level
-		PercentageUsed: 50,             // Normal
-		AvailableSpare: 50,             // Normal  
+		Temperature:    65, // Warning level
+		PercentageUsed: 50, // Normal
+		AvailableSpare: 50, // Normal
 		Healthy:        false,
 	}
 
@@ -779,9 +779,9 @@ func TestAlertEscalation(t *testing.T) {
 	smart2 := &SMARTData{
 		Device:         "/dev/nvme0n1",
 		IsNVMe:         true,
-		Temperature:    75,             // Critical level
-		PercentageUsed: 50,             // Normal
-		AvailableSpare: 50,             // Normal
+		Temperature:    75, // Critical level
+		PercentageUsed: 50, // Normal
+		AvailableSpare: 50, // Normal
 		Healthy:        false,
 	}
 
@@ -876,10 +876,10 @@ func TestOverallSeverity(t *testing.T) {
 			name: "NVMe emergency - multiple factors",
 			smart: &SMARTData{
 				IsNVMe:          true,
-				Temperature:     85, // Emergency
+				Temperature:     85,  // Emergency
 				PercentageUsed:  100, // Emergency
-				AvailableSpare:  3,  // Emergency
-				CriticalWarning: 8,  // Read-only = Emergency
+				AvailableSpare:  3,   // Emergency
+				CriticalWarning: 8,   // Read-only = Emergency
 			},
 			expected: SeverityEmergency,
 		},

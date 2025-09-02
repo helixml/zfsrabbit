@@ -64,7 +64,7 @@ func TestSSHTransportClose(t *testing.T) {
 }
 
 // Skip the SSH functionality tests that require actual network connections
-// and ZFS commands. These would be better as integration tests with 
+// and ZFS commands. These would be better as integration tests with
 // proper test infrastructure.
 
 func TestSSHTransportListRemoteSnapshots_SkipIntegration(t *testing.T) {

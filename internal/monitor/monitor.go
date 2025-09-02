@@ -39,18 +39,18 @@ func (s AlertSeverity) String() string {
 }
 
 type AlertState struct {
-	LastAlertTime     time.Time
-	LastSeverity      AlertSeverity
-	LastTemperature   int
+	LastAlertTime       time.Time
+	LastSeverity        AlertSeverity
+	LastTemperature     int
 	LastCriticalWarning int
 }
 
 type Monitor struct {
-	config       *config.Config
-	alerter      Alerter
-	ctx          context.Context
-	cancel       context.CancelFunc
-	alertStates  map[string]*AlertState // Per-device alert state
+	config        *config.Config
+	alerter       Alerter
+	ctx           context.Context
+	cancel        context.CancelFunc
+	alertStates   map[string]*AlertState // Per-device alert state
 	alertCooldown time.Duration
 }
 
@@ -105,7 +105,7 @@ type SMARTData struct {
 
 func New(cfg *config.Config, alerter Alerter) *Monitor {
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	return &Monitor{
 		config:        cfg,
 		alerter:       alerter,
@@ -118,10 +118,10 @@ func New(cfg *config.Config, alerter Alerter) *Monitor {
 
 func (m *Monitor) Start() {
 	log.Println("Starting system monitor")
-	
+
 	ticker := time.NewTicker(m.config.Schedule.MonitorInterval)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-m.ctx.Done():
@@ -143,13 +143,13 @@ func (m *Monitor) checkSystemHealth() {
 		log.Printf("Failed to get ZFS pools: %v", err)
 		return
 	}
-	
+
 	for _, pool := range pools {
 		if err := m.checkPoolHealth(pool); err != nil {
 			log.Printf("Failed to check health of pool %s: %v", pool, err)
 		}
 	}
-	
+
 	if err := m.checkDiskHealth(); err != nil {
 		log.Printf("Failed to check disk health: %v", err)
 	}
@@ -160,14 +160,14 @@ func (m *Monitor) checkPoolHealth(pool string) error {
 	if err != nil {
 		return err
 	}
-	
+
 	health := &PoolHealth{
 		Pool:   pool,
 		State:  status.State,
 		Errors: status.Errors,
 		Scrub:  m.parseScrubStatus(status.Scan),
 	}
-	
+
 	for _, device := range status.Config {
 		deviceHealth := DeviceHealth{
 			Name:        device.Name,
@@ -178,26 +178,26 @@ func (m *Monitor) checkPoolHealth(pool string) error {
 			HasErrors:   device.Read > 0 || device.Write > 0 || device.Cksum > 0,
 		}
 		health.Devices = append(health.Devices, deviceHealth)
-		
+
 		if deviceHealth.HasErrors {
 			health.Degraded = true
 		}
 	}
-	
+
 	if health.State != "ONLINE" || health.Degraded || len(health.Errors) > 0 {
 		m.sendPoolAlert(health)
 	}
-	
+
 	return nil
 }
 
 func (m *Monitor) parseScrubStatus(scanLine string) ScrubStatus {
 	scrub := ScrubStatus{}
-	
+
 	if strings.Contains(scanLine, "in progress") {
 		scrub.InProgress = true
 	}
-	
+
 	// Handle completed scrub with error count
 	re := regexp.MustCompile(`with (\d+) errors on (.+?)$`)
 	matches := re.FindStringSubmatch(scanLine)
@@ -209,7 +209,7 @@ func (m *Monitor) parseScrubStatus(scanLine string) ScrubStatus {
 			scrub.LastRun = t
 		}
 	}
-	
+
 	scrub.Status = scanLine
 	return scrub
 }
@@ -219,19 +219,19 @@ func (m *Monitor) checkDiskHealth() error {
 	if err != nil {
 		return err
 	}
-	
+
 	for _, disk := range disks {
 		smart, err := m.getSMARTData(disk)
 		if err != nil {
 			log.Printf("Failed to get SMART data for %s: %v", disk, err)
 			continue
 		}
-		
+
 		if !smart.Healthy || len(smart.Errors) > 0 {
 			m.sendDiskAlert(smart)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -241,7 +241,7 @@ func (m *Monitor) getSystemDisks() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	var disks []string
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
 	for _, line := range lines {
@@ -250,7 +250,7 @@ func (m *Monitor) getSystemDisks() ([]string, error) {
 			disks = append(disks, "/dev/"+disk)
 		}
 	}
-	
+
 	return disks, nil
 }
 
@@ -259,30 +259,30 @@ func (m *Monitor) getSMARTData(device string) (*SMARTData, error) {
 		Device:  device,
 		Healthy: true,
 	}
-	
+
 	// Check if this is an NVMe device
 	if strings.Contains(device, "nvme") {
 		return m.getNVMeSMARTData(device, smart)
 	}
-	
+
 	// Traditional SMART data for HDDs/SATA SSDs
 	cmd := exec.Command("smartctl", "-H", "-A", device)
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
-	
+
 	lines := strings.Split(string(output), "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		
+
 		if strings.Contains(line, "SMART overall-health") {
 			if !strings.Contains(line, "PASSED") {
 				smart.Healthy = false
 				smart.Errors = append(smart.Errors, "SMART health check failed")
 			}
 		}
-		
+
 		if strings.Contains(line, "Temperature_Celsius") {
 			fields := strings.Fields(line)
 			if len(fields) >= 10 {
@@ -294,10 +294,10 @@ func (m *Monitor) getSMARTData(device string) (*SMARTData, error) {
 				}
 			}
 		}
-		
-		if strings.Contains(line, "Reallocated_Sector_Ct") || 
-		   strings.Contains(line, "Current_Pending_Sector") ||
-		   strings.Contains(line, "Offline_Uncorrectable") {
+
+		if strings.Contains(line, "Reallocated_Sector_Ct") ||
+			strings.Contains(line, "Current_Pending_Sector") ||
+			strings.Contains(line, "Offline_Uncorrectable") {
 			fields := strings.Fields(line)
 			if len(fields) >= 10 {
 				if value, err := strconv.Atoi(fields[9]); err == nil && value > 0 {
@@ -306,18 +306,18 @@ func (m *Monitor) getSMARTData(device string) (*SMARTData, error) {
 			}
 		}
 	}
-	
+
 	return smart, nil
 }
 
 func (m *Monitor) getNVMeSMARTData(device string, smart *SMARTData) (*SMARTData, error) {
 	smart.IsNVMe = true
-	
+
 	// Try nvme-cli first for better NVMe support
 	if err := m.parseNVMeCLI(device, smart); err == nil {
 		return smart, nil
 	}
-	
+
 	// Fallback to smartctl for NVMe
 	return m.parseSmartctlNVMe(device, smart)
 }
@@ -328,11 +328,11 @@ func (m *Monitor) parseNVMeCLI(device string, smart *SMARTData) error {
 	if err != nil {
 		return err
 	}
-	
+
 	lines := strings.Split(string(output), "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		
+
 		// Parse critical warning
 		if strings.Contains(line, "critical_warning") {
 			fields := strings.Fields(line)
@@ -346,7 +346,7 @@ func (m *Monitor) parseNVMeCLI(device string, smart *SMARTData) error {
 				}
 			}
 		}
-		
+
 		// Parse temperature
 		if strings.Contains(line, "temperature") && strings.Contains(line, "Celsius") {
 			fields := strings.Fields(line)
@@ -360,7 +360,7 @@ func (m *Monitor) parseNVMeCLI(device string, smart *SMARTData) error {
 				}
 			}
 		}
-		
+
 		// Parse percentage used (wear level)
 		if strings.Contains(line, "percentage_used") {
 			fields := strings.Fields(line)
@@ -373,7 +373,7 @@ func (m *Monitor) parseNVMeCLI(device string, smart *SMARTData) error {
 				}
 			}
 		}
-		
+
 		// Parse available spare
 		if strings.Contains(line, "available_spare") {
 			fields := strings.Fields(line)
@@ -387,7 +387,7 @@ func (m *Monitor) parseNVMeCLI(device string, smart *SMARTData) error {
 				}
 			}
 		}
-		
+
 		// Parse data units written
 		if strings.Contains(line, "data_units_written") {
 			fields := strings.Fields(line)
@@ -398,7 +398,7 @@ func (m *Monitor) parseNVMeCLI(device string, smart *SMARTData) error {
 			}
 		}
 	}
-	
+
 	return nil
 }
 
@@ -408,18 +408,18 @@ func (m *Monitor) parseSmartctlNVMe(device string, smart *SMARTData) (*SMARTData
 	if err != nil {
 		return nil, err
 	}
-	
+
 	lines := strings.Split(string(output), "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		
+
 		if strings.Contains(line, "SMART overall-health") {
 			if !strings.Contains(line, "PASSED") {
 				smart.Healthy = false
 				smart.Errors = append(smart.Errors, "SMART health check failed")
 			}
 		}
-		
+
 		// Parse NVMe-specific attributes from smartctl
 		if strings.Contains(line, "Critical Warning:") {
 			fields := strings.Fields(line)
@@ -433,7 +433,7 @@ func (m *Monitor) parseSmartctlNVMe(device string, smart *SMARTData) (*SMARTData
 				}
 			}
 		}
-		
+
 		if strings.Contains(line, "Temperature:") {
 			fields := strings.Fields(line)
 			for _, field := range fields {
@@ -446,7 +446,7 @@ func (m *Monitor) parseSmartctlNVMe(device string, smart *SMARTData) (*SMARTData
 				}
 			}
 		}
-		
+
 		if strings.Contains(line, "Percentage Used:") {
 			fields := strings.Fields(line)
 			if len(fields) >= 3 {
@@ -458,7 +458,7 @@ func (m *Monitor) parseSmartctlNVMe(device string, smart *SMARTData) (*SMARTData
 				}
 			}
 		}
-		
+
 		if strings.Contains(line, "Available Spare:") {
 			fields := strings.Fields(line)
 			if len(fields) >= 3 {
@@ -472,18 +472,18 @@ func (m *Monitor) parseSmartctlNVMe(device string, smart *SMARTData) (*SMARTData
 			}
 		}
 	}
-	
+
 	return smart, nil
 }
 
 func (m *Monitor) sendPoolAlert(health *PoolHealth) {
 	alertKey := fmt.Sprintf("pool_%s", health.Pool)
 	currentState, exists := m.alertStates[alertKey]
-	
+
 	if exists && time.Since(currentState.LastAlertTime) < m.alertCooldown {
 		return
 	}
-	
+
 	subject := fmt.Sprintf("ZFS Pool Alert: %s", health.Pool)
 	body := fmt.Sprintf(`ZFS Pool Health Alert
 
@@ -493,23 +493,23 @@ Degraded: %v
 
 Device Status:
 `, health.Pool, health.State, health.Degraded)
-	
+
 	for _, device := range health.Devices {
-		body += fmt.Sprintf("  %s: %s (R:%d W:%d C:%d)\n", 
+		body += fmt.Sprintf("  %s: %s (R:%d W:%d C:%d)\n",
 			device.Name, device.State, device.ReadErrors, device.WriteErrors, device.CksumErrors)
 	}
-	
+
 	if len(health.Errors) > 0 {
 		body += "\nErrors:\n"
 		for _, err := range health.Errors {
 			body += fmt.Sprintf("  %s\n", err)
 		}
 	}
-	
+
 	if health.Scrub.Errors > 0 {
 		body += fmt.Sprintf("\nScrub Errors: %d\n", health.Scrub.Errors)
 	}
-	
+
 	if err := m.alerter.SendAlert(subject, body); err != nil {
 		log.Printf("Failed to send pool alert: %v", err)
 	} else {
@@ -555,7 +555,7 @@ func (m *Monitor) getTemperatureSeverity(temperature int, isNVMe bool) AlertSeve
 
 func (m *Monitor) getCriticalWarningSeverity(warning int) AlertSeverity {
 	maxSeverity := SeverityInfo
-	
+
 	if warning&8 != 0 { // Media read-only
 		maxSeverity = SeverityEmergency
 	} else if warning&4 != 0 { // Reliability degraded
@@ -563,31 +563,31 @@ func (m *Monitor) getCriticalWarningSeverity(warning int) AlertSeverity {
 			maxSeverity = SeverityCritical
 		}
 	}
-	
+
 	if warning&1 != 0 { // Spare capacity low
 		if SeverityCritical > maxSeverity {
 			maxSeverity = SeverityCritical
 		}
 	}
-	
+
 	if warning&2 != 0 { // Temperature threshold
 		if SeverityWarning > maxSeverity {
 			maxSeverity = SeverityWarning
 		}
 	}
-	
+
 	return maxSeverity
 }
 
 func (m *Monitor) getOverallSeverity(smart *SMARTData) AlertSeverity {
 	maxSeverity := SeverityInfo
-	
+
 	// Check temperature severity
 	tempSeverity := m.getTemperatureSeverity(smart.Temperature, smart.IsNVMe)
 	if tempSeverity > maxSeverity {
 		maxSeverity = tempSeverity
 	}
-	
+
 	// Check NVMe critical warning severity
 	if smart.IsNVMe && smart.CriticalWarning > 0 {
 		warningSeverity := m.getCriticalWarningSeverity(smart.CriticalWarning)
@@ -595,7 +595,7 @@ func (m *Monitor) getOverallSeverity(smart *SMARTData) AlertSeverity {
 			maxSeverity = warningSeverity
 		}
 	}
-	
+
 	// Check wear level for NVMe
 	if smart.IsNVMe {
 		switch {
@@ -613,7 +613,7 @@ func (m *Monitor) getOverallSeverity(smart *SMARTData) AlertSeverity {
 			}
 		}
 	}
-	
+
 	// Check available spare for NVMe
 	if smart.IsNVMe {
 		switch {
@@ -631,14 +631,14 @@ func (m *Monitor) getOverallSeverity(smart *SMARTData) AlertSeverity {
 			}
 		}
 	}
-	
+
 	return maxSeverity
 }
 
 func (m *Monitor) shouldSendAlert(smart *SMARTData, severity AlertSeverity) bool {
 	alertKey := smart.Device
 	currentState, exists := m.alertStates[alertKey]
-	
+
 	if !exists {
 		// First alert for this device
 		m.alertStates[alertKey] = &AlertState{
@@ -649,20 +649,20 @@ func (m *Monitor) shouldSendAlert(smart *SMARTData, severity AlertSeverity) bool
 		}
 		return severity > SeverityInfo
 	}
-	
+
 	// Check for escalation conditions
 	escalated := false
-	
+
 	// Severity increased
 	if severity > currentState.LastSeverity {
 		escalated = true
 	}
-	
+
 	// Significant temperature increase (>10°C)
 	if smart.Temperature > currentState.LastTemperature+10 {
 		escalated = true
 	}
-	
+
 	// New critical warning bits
 	if smart.IsNVMe {
 		newWarnings := smart.CriticalWarning & ^currentState.LastCriticalWarning
@@ -670,7 +670,7 @@ func (m *Monitor) shouldSendAlert(smart *SMARTData, severity AlertSeverity) bool
 			escalated = true
 		}
 	}
-	
+
 	// If escalated, bypass cooldown
 	if escalated {
 		currentState.LastAlertTime = time.Now()
@@ -679,7 +679,7 @@ func (m *Monitor) shouldSendAlert(smart *SMARTData, severity AlertSeverity) bool
 		currentState.LastCriticalWarning = smart.CriticalWarning
 		return true
 	}
-	
+
 	// Check cooldown for same severity
 	if time.Since(currentState.LastAlertTime) >= m.alertCooldown && severity > SeverityInfo {
 		currentState.LastAlertTime = time.Now()
@@ -688,22 +688,22 @@ func (m *Monitor) shouldSendAlert(smart *SMARTData, severity AlertSeverity) bool
 		currentState.LastCriticalWarning = smart.CriticalWarning
 		return true
 	}
-	
+
 	return false
 }
 
 func (m *Monitor) sendDiskAlert(smart *SMARTData) {
 	severity := m.getOverallSeverity(smart)
-	
+
 	if !m.shouldSendAlert(smart, severity) {
 		return
 	}
-	
+
 	deviceType := "Disk"
 	if smart.IsNVMe {
 		deviceType = "NVMe SSD"
 	}
-	
+
 	// Include severity in subject
 	subject := fmt.Sprintf("[%s] %s Health Alert: %s", severity.String(), deviceType, smart.Device)
 	body := fmt.Sprintf(`%s Health Alert
@@ -744,14 +744,14 @@ Data Written: %d units
 			}
 		}
 	}
-	
+
 	if len(smart.Errors) > 0 {
 		body += "\nErrors:\n"
 		for _, err := range smart.Errors {
 			body += fmt.Sprintf("  %s\n", err)
 		}
 	}
-	
+
 	if err := m.alerter.SendAlert(subject, body); err != nil {
 		log.Printf("Failed to send disk alert: %v", err)
 	} else {
@@ -761,7 +761,7 @@ Data Written: %d units
 
 func (m *Monitor) GetSystemStatus() map[string]interface{} {
 	status := make(map[string]interface{})
-	
+
 	pools, err := zfs.GetPools()
 	if err == nil {
 		poolStatus := make(map[string]interface{})
@@ -772,7 +772,7 @@ func (m *Monitor) GetSystemStatus() map[string]interface{} {
 		}
 		status["pools"] = poolStatus
 	}
-	
+
 	disks, err := m.getSystemDisks()
 	if err == nil {
 		diskStatus := make(map[string]interface{})
@@ -783,6 +783,6 @@ func (m *Monitor) GetSystemStatus() map[string]interface{} {
 		}
 		status["disks"] = diskStatus
 	}
-	
+
 	return status
 }

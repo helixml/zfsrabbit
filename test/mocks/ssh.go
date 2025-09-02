@@ -17,15 +17,15 @@ type MockRemoteDatasetInfo struct {
 
 // MockSSHTransport mocks SSH transport functionality
 type MockSSHTransport struct {
-	ConnectError       error
-	ExecuteCommands    map[string]string // command -> output
-	ExecuteErrors      map[string]error  // command -> error
-	RemoteSnapshots    []string
-	RemoteDatasets     map[string][]string
-	DatasetInfos       map[string]*transport.RemoteDatasetInfo
-	SendSnapshotError  error
-	RestoreError       error
-	CallLog            []string
+	ConnectError      error
+	ExecuteCommands   map[string]string // command -> output
+	ExecuteErrors     map[string]error  // command -> error
+	RemoteSnapshots   []string
+	RemoteDatasets    map[string][]string
+	DatasetInfos      map[string]*transport.RemoteDatasetInfo
+	SendSnapshotError error
+	RestoreError      error
+	CallLog           []string
 }
 
 func NewMockSSHTransport() *MockSSHTransport {
@@ -50,15 +50,15 @@ func (m *MockSSHTransport) Close() error {
 
 func (m *MockSSHTransport) ExecuteCommand(command string) (string, error) {
 	m.CallLog = append(m.CallLog, fmt.Sprintf("ExecuteCommand: %s", command))
-	
+
 	if err, exists := m.ExecuteErrors[command]; exists {
 		return "", err
 	}
-	
+
 	if output, exists := m.ExecuteCommands[command]; exists {
 		return output, nil
 	}
-	
+
 	return "", fmt.Errorf("command not mocked: %s", command)
 }
 

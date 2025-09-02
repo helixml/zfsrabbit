@@ -7,11 +7,11 @@ import (
 	"strings"
 
 	"zfsrabbit/internal/config"
-	"zfsrabbit/internal/scheduler"
 	"zfsrabbit/internal/monitor"
-	"zfsrabbit/internal/zfs"
 	"zfsrabbit/internal/restore"
+	"zfsrabbit/internal/scheduler"
 	"zfsrabbit/internal/transport"
+	"zfsrabbit/internal/zfs"
 )
 
 type CommandHandler struct {
@@ -107,7 +107,7 @@ func (h *CommandHandler) HandleSlashCommand(w http.ResponseWriter, r *http.Reque
 	}
 
 	response := h.processCommand(req)
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
@@ -188,7 +188,7 @@ Example: ` + "`/zfsrabbit status`"
 
 func (h *CommandHandler) getSystemStatus() SlashCommandResponse {
 	status := h.monitor.GetSystemStatus()
-	
+
 	blocks := []SlackBlock{
 		{
 			Type: "header",
@@ -286,9 +286,9 @@ func (h *CommandHandler) listSnapshots() SlashCommandResponse {
 	text := "*Recent Snapshots:*\n"
 	for i := len(snapshots) - limit; i < len(snapshots); i++ {
 		snap := snapshots[i]
-		text += fmt.Sprintf("• `%s` - %s (%s)\n", 
-			snap.Name, 
-			snap.Created.Format("Jan 02 15:04"), 
+		text += fmt.Sprintf("• `%s` - %s (%s)\n",
+			snap.Name,
+			snap.Created.Format("Jan 02 15:04"),
 			snap.Used)
 	}
 
@@ -346,7 +346,7 @@ func (h *CommandHandler) getPoolStatus() SlashCommandResponse {
 
 func (h *CommandHandler) getDiskStatus() SlashCommandResponse {
 	status := h.monitor.GetSystemStatus()
-	
+
 	disks, ok := status["disks"].(map[string]interface{})
 	if !ok || len(disks) == 0 {
 		return SlashCommandResponse{
@@ -360,17 +360,17 @@ func (h *CommandHandler) getDiskStatus() SlashCommandResponse {
 		if ds, ok := diskStatus.(map[string]interface{}); ok {
 			healthy, _ := ds["Healthy"].(bool)
 			temp, _ := ds["Temperature"].(int)
-			
+
 			emoji := "✅"
 			if !healthy {
 				emoji = "❌"
 			} else if temp > 50 {
 				emoji = "🔥"
 			}
-			
+
 			fields = append(fields, SlackField{
-				Type:  "mrkdwn",
-				Text:  fmt.Sprintf("*%s %s:*\n%s %d°C", emoji, disk, 
+				Type: "mrkdwn",
+				Text: fmt.Sprintf("*%s %s:*\n%s %d°C", emoji, disk,
 					map[bool]string{true: "Healthy", false: "Issues"}[healthy], temp),
 				Short: true,
 			})
@@ -405,7 +405,7 @@ func (h *CommandHandler) triggerRestore(snapshot, dataset string) SlashCommandRe
 
 func (h *CommandHandler) getRestoreJobs() SlashCommandResponse {
 	jobs := h.restoreManager.ListJobs()
-	
+
 	if len(jobs) == 0 {
 		return SlashCommandResponse{
 			ResponseType: "ephemeral",
@@ -486,14 +486,14 @@ func (h *CommandHandler) browseRemoteDataset(dataset string) SlashCommandRespons
 		text += "No snapshots found in this dataset."
 	} else {
 		text += fmt.Sprintf("*Snapshots (%d):*\n", len(info.Snapshots))
-		
+
 		// Show last 10 snapshots
 		start := 0
 		if len(info.Snapshots) > 10 {
 			start = len(info.Snapshots) - 10
 			text += fmt.Sprintf("(Showing latest 10 of %d snapshots)\n", len(info.Snapshots))
 		}
-		
+
 		for i := start; i < len(info.Snapshots); i++ {
 			text += fmt.Sprintf("• `%s`\n", info.Snapshots[i])
 		}
