@@ -16,7 +16,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.24'
+        go-version: '1.24.6'
 
     - name: Download dependencies
       run: go mod download
@@ -48,7 +48,7 @@ jobs:
       run: go vet ./...
 
     - name: Run staticcheck
-      uses: dominikh/staticcheck-action@v1.3.0
+      uses: dominikh/staticcheck-action@v1.3.1
       with:
-        version: "2023.1.6"
+        version: "2025.1.1"
         install-go: false
