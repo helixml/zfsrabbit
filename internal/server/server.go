@@ -68,7 +68,11 @@ func (s *Server) Start() error {
 	go s.monitor.Start()
 
 	log.Printf("ZFSRabbit started - Web interface available at http://localhost:%d", s.config.Server.Port)
-	log.Printf("Login with username 'admin' and password from environment variable %s", s.config.Server.AdminPassEnv)
+	if s.config.GetAdminPassword() == "" {
+		log.Printf("WARNING: Admin password not set in environment variable %s", s.config.Server.AdminPassEnv)
+	} else {
+		log.Printf("Admin authentication enabled (password from %s)", s.config.Server.AdminPassEnv)
+	}
 
 	return s.webServer.Start()
 }

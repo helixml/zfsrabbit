@@ -5,7 +5,6 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
-	"time"
 )
 
 // The Manager now supports dependency injection, so we don't need TestableManager
@@ -238,39 +237,6 @@ tank/test@snap2	Tue Jan  3 10:30 2023	2.34G	5.67G`,
 
 // Helper methods removed - using Manager methods directly
 
-func parseSnapshotOutput(output string) ([]Snapshot, error) {
-	var snapshots []Snapshot
-	lines := strings.Split(strings.TrimSpace(output), "\n")
-
-	for _, line := range lines {
-		if line == "" {
-			continue
-		}
-
-		fields := strings.Fields(line)
-		if len(fields) >= 4 {
-			parts := strings.Split(fields[0], "@")
-			if len(parts) == 2 {
-				// Try to parse the date - use a simple approach for testing
-				var created time.Time
-				if len(fields) >= 2 {
-					// For testing, just use current time
-					created = time.Now()
-				}
-
-				snapshots = append(snapshots, Snapshot{
-					Name:    parts[1],
-					Created: created,
-					Used:    fields[2],
-					Refer:   fields[3],
-					Dataset: parts[0],
-				})
-			}
-		}
-	}
-
-	return snapshots, nil
-}
 
 func TestSendSnapshot(t *testing.T) {
 	tests := []struct {

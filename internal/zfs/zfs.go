@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"zfsrabbit/internal/validation"
 )
 
 type Manager struct {
@@ -79,6 +81,11 @@ func NewWithExecutor(dataset, sendCompression string, recursive bool, executor C
 }
 
 func (m *Manager) CreateSnapshot(name string) error {
+	// Validate snapshot name to prevent injection
+	if err := validation.ValidateSnapshotName(name); err != nil {
+		return fmt.Errorf("invalid snapshot name: %w", err)
+	}
+
 	snapshotName := fmt.Sprintf("%s@%s", m.dataset, name)
 
 	args := []string{"snapshot"}
@@ -122,6 +129,11 @@ func (m *Manager) ListSnapshots() ([]Snapshot, error) {
 }
 
 func (m *Manager) DestroySnapshot(name string) error {
+	// Validate snapshot name to prevent injection
+	if err := validation.ValidateSnapshotName(name); err != nil {
+		return fmt.Errorf("invalid snapshot name: %w", err)
+	}
+
 	snapshotName := fmt.Sprintf("%s@%s", m.dataset, name)
 	cmd := m.executor.Command("zfs", "destroy", snapshotName)
 	return m.executor.Run(cmd)

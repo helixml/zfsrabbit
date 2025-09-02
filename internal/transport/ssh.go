@@ -3,11 +3,15 @@ package transport
 import (
 	"fmt"
 	"io"
+	"net"
+	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 	"zfsrabbit/internal/config"
+	"zfsrabbit/internal/validation"
 )
 
 type SSHTransport struct {
@@ -32,10 +36,17 @@ func (t *SSHTransport) Connect() error {
 		Auth: []ssh.AuthMethod{
 			ssh.PublicKeys(key),
 		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // WARNING: Insecure - should implement proper host key verification in production
+		Timeout:         30 * time.Second,
 	}
 
-	client, err := ssh.Dial("tcp", t.config.RemoteHost+":22", config)
+	// Add port if not specified
+	host := t.config.RemoteHost
+	if !strings.Contains(host, ":") {
+		host = net.JoinHostPort(host, "22")
+	}
+
+	client, err := ssh.Dial("tcp", host, config)
 	if err != nil {
 		return fmt.Errorf("failed to connect to remote host: %w", err)
 	}
@@ -64,14 +75,13 @@ func (t *SSHTransport) SendSnapshot(snapshotReader io.Reader, isIncremental bool
 	}
 	defer session.Close()
 
-	var receiveCmd string
-	if isIncremental {
-		receiveCmd = fmt.Sprintf("mbuffer -s %s -m %s | zfs receive -F %s",
-			"128k", t.config.MbufferSize, t.config.RemoteDataset)
-	} else {
-		receiveCmd = fmt.Sprintf("mbuffer -s %s -m %s | zfs receive -F %s",
-			"128k", t.config.MbufferSize, t.config.RemoteDataset)
-	}
+	// Sanitize dataset name to prevent command injection
+	sanitizedDataset := validation.SanitizeCommand(t.config.RemoteDataset)
+	sanitizedMbufferSize := validation.SanitizeCommand(t.config.MbufferSize)
+	
+	// Build command safely
+	receiveCmd := fmt.Sprintf("mbuffer -s 128k -m %s | zfs receive -F %s",
+		sanitizedMbufferSize, sanitizedDataset)
 
 	session.Stdin = snapshotReader
 	return session.Run(receiveCmd)
@@ -239,7 +249,13 @@ type mbufferReceiver struct {
 }
 
 func (m *mbufferReceiver) Write(p []byte) (n int, err error) {
-	cmd := exec.Command("sh", "-c", fmt.Sprintf("mbuffer -s 128k -m %s | zfs receive -F %s", m.size, m.dataset))
+	// Sanitize inputs to prevent command injection
+	sanitizedSize := validation.SanitizeCommand(m.size)
+	sanitizedDataset := validation.SanitizeCommand(m.dataset)
+	
+	// Build command safely - sanitized inputs prevent injection
+	safeCommand := fmt.Sprintf("mbuffer -s 128k -m %s | zfs receive -F %s", sanitizedSize, sanitizedDataset)
+	cmd := exec.Command("sh", "-c", safeCommand)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -262,14 +278,19 @@ func (m *mbufferReceiver) Write(p []byte) (n int, err error) {
 }
 
 func loadPrivateKey(keyPath string) (ssh.Signer, error) {
-	key, err := exec.Command("cat", keyPath).Output()
+	// Validate key path to prevent path traversal
+	if strings.Contains(keyPath, "..") || keyPath == "" {
+		return nil, fmt.Errorf("invalid key path: %s", keyPath)
+	}
+
+	key, err := os.ReadFile(keyPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read private key file: %w", err)
 	}
 
 	signer, err := ssh.ParsePrivateKey(key)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse private key: %w", err)
 	}
 
 	return signer, nil

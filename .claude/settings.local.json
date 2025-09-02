@@ -12,7 +12,8 @@
       "WebFetch(domain:docs.slack.dev)",
       "Bash(gofmt:*)",
       "Bash(go vet:*)",
-      "Bash(staticcheck:*)"
+      "Bash(staticcheck:*)",
+      "Bash(go install:*)"
     ],
     "deny": [],
     "ask": []

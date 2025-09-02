@@ -1,10 +1,13 @@
 package config
 
 import (
+	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
+	"zfsrabbit/internal/validation"
 )
 
 type Config struct {
@@ -105,10 +108,90 @@ func Load(path string) (*Config, error) {
 	}
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse config file: %w", err)
+	}
+
+	// Validate configuration
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
 	return cfg, nil
+}
+
+// Validate validates the configuration for security and correctness
+func (c *Config) Validate() error {
+	// Server validation
+	if err := validation.ValidatePort(c.Server.Port); err != nil {
+		return fmt.Errorf("server port: %w", err)
+	}
+
+	if c.Server.AdminPassEnv == "" {
+		return fmt.Errorf("server.admin_pass_env cannot be empty")
+	}
+
+	// ZFS validation
+	if c.ZFS.Dataset == "" {
+		return fmt.Errorf("zfs.dataset cannot be empty")
+	}
+
+	if err := validation.ValidateDatasetName(c.ZFS.Dataset); err != nil {
+		return fmt.Errorf("zfs.dataset: %w", err)
+	}
+
+	// SSH validation
+	if c.SSH.RemoteHost == "" {
+		return fmt.Errorf("ssh.remote_host cannot be empty")
+	}
+
+	if c.SSH.RemoteUser == "" {
+		return fmt.Errorf("ssh.remote_user cannot be empty")
+	}
+
+	if c.SSH.PrivateKey == "" {
+		return fmt.Errorf("ssh.private_key cannot be empty")
+	}
+
+	if c.SSH.RemoteDataset == "" {
+		return fmt.Errorf("ssh.remote_dataset cannot be empty")
+	}
+
+	if err := validation.ValidateDatasetName(c.SSH.RemoteDataset); err != nil {
+		return fmt.Errorf("ssh.remote_dataset: %w", err)
+	}
+
+	// Email validation
+	if c.Email.SMTPHost != "" { // Email is optional
+		if err := validation.ValidatePort(c.Email.SMTPPort); err != nil {
+			return fmt.Errorf("email.smtp_port: %w", err)
+		}
+
+		for _, email := range c.Email.ToEmails {
+			if err := validation.ValidateEmailAddress(email); err != nil {
+				return fmt.Errorf("email.to_emails: %w", err)
+			}
+		}
+
+		if c.Email.FromEmail != "" {
+			if err := validation.ValidateEmailAddress(c.Email.FromEmail); err != nil {
+				return fmt.Errorf("email.from_email: %w", err)
+			}
+		}
+	}
+
+	// Slack validation
+	if c.Slack.Enabled && c.Slack.WebhookURL != "" {
+		if !strings.HasPrefix(c.Slack.WebhookURL, "https://hooks.slack.com/") {
+			return fmt.Errorf("slack.webhook_url must be a valid Slack webhook URL")
+		}
+	}
+
+	// Schedule validation - basic cron validation
+	if c.Schedule.MonitorInterval < time.Minute {
+		return fmt.Errorf("schedule.monitor_interval must be at least 1 minute")
+	}
+
+	return nil
 }
 
 func (c *Config) GetAdminPassword() string {
